@@ -1,0 +1,83 @@
+{
+  "template_note": "Blank Suno Studio state template used when a newly created project has no state yet.",
+  "state": {
+    "timing": {
+      "type": "manual",
+      "bps": 2.0,
+      "lockBPS": true,
+      "firstBeatSeconds": 0.0,
+      "bpsAutomation": []
+    },
+    "markersRegistry": {},
+    "sections": {},
+    "tracks": [
+      {
+        "color": "#02AF4A",
+        "takeLanes": [],
+        "clips": [],
+        "solo": false,
+        "mute": false,
+        "instrument": { "type": "song" },
+        "type": "audio",
+        "eq": {
+          "enabled": true,
+          "band1": { "q": 0.707, "type": "highpass",  "enabled": false, "frequency": 60.0,   "gain": 0.0 },
+          "band2": { "q": 0.707, "type": "lowshelf",  "enabled": true,  "frequency": 160.0,  "gain": 0.0 },
+          "band3": { "q": 0.707, "type": "peaking",   "enabled": true,  "frequency": 450.0,  "gain": 0.0 },
+          "band4": { "q": 0.707, "type": "peaking",   "enabled": true,  "frequency": 1200.0, "gain": 0.0 },
+          "band5": { "q": 0.707, "type": "highshelf", "enabled": true,  "frequency": 3200.0, "gain": 0.0 },
+          "band6": { "q": 0.707, "type": "lowpass",   "enabled": false, "frequency": 8800.0, "gain": 0.0 }
+        },
+        "clipCreationIntents": [],
+        "amplitude": 1.0,
+        "takeLanesExpanded": false,
+        "balance": 0.0,
+        "signalChain": [],
+        "name": "New Track",
+        "id": "template-track-audio",
+        "routingMode": "linear",
+        "arm": false,
+        "height": 88.0
+      }
+    ],
+    "layout": {
+      "midiAutomationLaneHeight": 24.0,
+      "arrangementEditorHeight": 280.0,
+      "midiAutomationLaneId": {
+        "category": "noteProperty",
+        "property": "velocity"
+      }
+    },
+    "routing": {},
+    "amplitude": 1.0,
+    "songFadeOutBeats": 0,
+    "songFadeInBeats": 0,
+    "selection": {
+      "anchorBeats": 0,
+      "focusBeats": 0,
+      "trackIds": ["template-track-audio"],
+      "focusedTrackId": "template-track-audio",
+      "focusedArea": "timeline",
+      "arrangementAnchorBeats": null,
+      "arrangementFocusBeats": null,
+      "noteIds": [],
+      "warpMarkerSeconds": {},
+      "automationPointIndices": [],
+      "contextBeforeBeats": 32,
+      "contextAfterBeats": 32
+    },
+    "loop": {
+      "endBeats": 32,
+      "enabled": false,
+      "startBeats": 0
+    },
+    "masterRoutingMode": "linear",
+    "metronome": { "enabled": false, "amplitude": 1.0 },
+    "editorPointerModes": { "midi": "select", "audio": "select" },
+    "timeSignatureChanges": [
+      { "beatsPerSubdivision": 1.0, "subdivisionsPerBar": 4.0, "startBeats": 0.0 }
+    ],
+    "masterSignalChain": [],
+    "lyricsCorrectionsByClipId": {}
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "suno-uploader",
+  "version": "5.0.0",
+  "description": "期音科技 Suno歌曲上传器（内部使用版）",
+  "main": "electron/main/main.js",
+  "author": "期音科技",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.qiyin.suno.uploader",
+    "productName": "Suno歌曲上传器",
+    "asar": true,
+    "files": [
+      "electron/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend"
+      },
+      {
+        "from": "vendor",
+        "to": "vendor"
+      },
+      {
+        "from": "python-embed",
+        "to": "python-embed"
+      },
+      {
+        "from": "suno-login-extension",
+        "to": "suno-login-extension"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  }
+}
