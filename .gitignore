@@ -1,0 +1,37 @@
+# 依赖
+node_modules/
+
+# 打包产物（含 exe，大文件不提交）
+dist/
+
+# 内置 Python 运行时（大，不提交）
+python-embed/
+
+# 后端编译的 exe（大，可从 backend/*.py 源码重建，不提交）
+backend/*.exe
+backend/*.pyd
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+
+# 内置 ffmpeg（大，不提交）
+vendor/ffmpeg/
+
+# 其它大二进制 / 模型 / vendor
+vendor/frida/
+vendor/kgg/
+vendor/qmcwasm/
+vendor/um/
+vendor/uvr/
+
+# 日志与临时
+*.log
+*.tmp
+*.partial
+.part
+*.bak
+*corrupted_bak
+
+# 系统
+.DS_Store
+Thumbs.db

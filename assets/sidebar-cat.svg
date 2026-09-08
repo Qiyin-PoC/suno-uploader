@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- 悸风喵核 Studio 透明猫咪矢量图 - 缩小窗口时不遮挡导航 -->
+  <!-- 猫耳朵 -->
+  <path d="M55 85 L40 30 L75 65 Z" fill="rgba(45,126,255,0.18)" stroke="rgba(45,126,255,0.35)" stroke-width="1.5"/>
+  <path d="M145 85 L160 30 L125 65 Z" fill="rgba(45,126,255,0.18)" stroke="rgba(45,126,255,0.35)" stroke-width="1.5"/>
+  <!-- 内耳 -->
+  <path d="M58 78 L48 42 L72 65 Z" fill="rgba(255,102,143,0.15)"/>
+  <path d="M142 78 L152 42 L128 65 Z" fill="rgba(255,102,143,0.15)"/>
+  <!-- 猫头 -->
+  <ellipse cx="100" cy="100" rx="55" ry="48" fill="rgba(45,126,255,0.10)" stroke="rgba(45,126,255,0.25)" stroke-width="1.5"/>
+  <!-- 眼睛 -->
+  <ellipse cx="78" cy="95" rx="10" ry="12" fill="rgba(45,126,255,0.20)" stroke="rgba(45,126,255,0.4)" stroke-width="1"/>
+  <ellipse cx="122" cy="95" rx="10" ry="12" fill="rgba(45,126,255,0.20)" stroke="rgba(45,126,255,0.4)" stroke-width="1"/>
+  <!-- 瞳孔 -->
+  <ellipse cx="80" cy="95" rx="4" ry="7" fill="rgba(45,126,255,0.5)"/>
+  <ellipse cx="124" cy="95" rx="4" ry="7" fill="rgba(45,126,255,0.5)"/>
+  <!-- 眼睛高光 -->
+  <circle cx="83" cy="91" r="2" fill="rgba(255,255,255,0.7)"/>
+  <circle cx="127" cy="91" r="2" fill="rgba(255,255,255,0.7)"/>
+  <!-- 鼻子 -->
+  <path d="M97 110 L100 114 L103 110 Z" fill="rgba(255,102,143,0.5)"/>
+  <!-- 嘴巴 -->
+  <path d="M100 114 Q93 120 88 118" stroke="rgba(45,126,255,0.3)" stroke-width="1" fill="none"/>
+  <path d="M100 114 Q107 120 112 118" stroke="rgba(45,126,255,0.3)" stroke-width="1" fill="none"/>
+  <!-- 胡须 -->
+  <line x1="55" y1="105" x2="75" y2="108" stroke="rgba(45,126,255,0.25)" stroke-width="1"/>
+  <line x1="55" y1="112" x2="75" y2="112" stroke="rgba(45,126,255,0.25)" stroke-width="1"/>
+  <line x1="145" y1="105" x2="125" y2="108" stroke="rgba(45,126,255,0.25)" stroke-width="1"/>
+  <line x1="145" y1="112" x2="125" y2="112" stroke="rgba(45,126,255,0.25)" stroke-width="1"/>
+  <!-- 猫身体 -->
+  <ellipse cx="100" cy="160" rx="45" ry="30" fill="rgba(45,126,255,0.08)" stroke="rgba(45,126,255,0.2)" stroke-width="1.5"/>
+  <!-- 尾巴 -->
+  <path d="M145 160 Q170 140 165 120 Q162 110 155 112" stroke="rgba(45,126,255,0.25)" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- 爪子 -->
+  <ellipse cx="75" cy="182" rx="12" ry="6" fill="rgba(45,126,255,0.10)" stroke="rgba(45,126,255,0.2)" stroke-width="1"/>
+  <ellipse cx="125" cy="182" rx="12" ry="6" fill="rgba(45,126,255,0.10)" stroke="rgba(45,126,255,0.2)" stroke-width="1"/>
+</svg>

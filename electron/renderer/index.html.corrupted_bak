@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>告白Studio 音频处理与Suno上传综合软件</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="titlebar">
+        <div class="brand-block drag-region">
+          <img src="../../assets/logo.svg" alt="告白Studio" class="brand-logo" />
+          <div class="brand-copy">
+            <h1>告白Suno Studio</h1>
+            <p>音频处理与Suno上传综合软件 · V2.0.4</p>
+          </div>
+        </div>
+        <div class="ready-pill drag-region" id="statusPill">
+          <span class="ready-dot"></span>
+          准备就绪
+          <span class="paw-mark">paw</span>
+        </div>
+        <div class="window-tools">
+          <button class="round-tool" type="button" title="帮助">?</button>
+          <button class="round-tool" type="button" title="设置">�?/button>
+          <button class="window-button" id="windowMinimizeBtn" type="button" title="最小化">一</button>
+          <button class="window-button" id="windowMaximizeBtn" type="button" title="最大化">�?/button>
+          <button class="window-button close" id="windowCloseBtn" type="button" title="关闭">×</button>
+        </div>
+      </header>
+
+      <section class="main-layout">
+        <aside class="sidebar">
+          <button class="nav-item active" type="button" data-panel="uploadPage">
+            <span class="nav-icon upload">1</span>
+            <span><strong>Suno歌曲上传</strong><small>一键上�?& 拼接</small></span>
+          </button>
+          <button class="nav-item" type="button" data-panel="unlockerPage">
+            <span class="nav-icon lock">2</span>
+            <span><strong>音频解密转换</strong><small>解密 & 开放格式互�?/small></span>
+          </button>
+          <button class="nav-item" type="button" data-panel="editorPage">
+            <span class="nav-icon wave">3</span>
+            <span><strong>可视化音频剪�?/strong><small>波形编辑 & 精准剪辑</small></span>
+          </button>
+          <button class="nav-item" type="button" data-panel="separationPage">
+            <span class="nav-icon mic">4</span>
+            <span><strong>消音处理</strong><small>人声消音 & 伴奏提取</small></span>
+          </button>
+          <button class="nav-item" type="button" data-panel="historyPage">
+            <span class="nav-icon history">5</span>
+            <span><strong>上传历史</strong><small>记录 & 管理</small></span>
+          </button>
+          <img class="sidebar-cat-image" src="../../assets/sidebar-cat.png" alt="告白音乐studio" />
+        </aside>
+
+        <section class="content-stage">
+          <section class="module-page active" id="uploadPage">
+            <div class="page-heading">
+              <div><p class="kicker">Suno Studio</p><h2>上传工作台</h2></div>
+              <span class="page-note">登录 · 选择音频 · 上传 · 歌词处理</span>
+            </div>
+            <div class="upload-grid">
+              <section class="panel upload-card">
+                <div class="panel-title">上传工作�?/div>
+                <div class="upload-card-section">
+                  <button class="primary-action wide" id="loginBtn" type="button">登录 Suno</button>
+                  <button class="ghost-action wide" id="logoutBtn" type="button" style="display:none">退出登�?/button>
+                </div>
+                <div class="upload-card-section">
+                  <div class="drop-card" id="uploadDropArea">
+                    <span class="music-icon">�?/span>
+                    <strong id="audioName">未选择</strong>
+                    <small id="audioPath">拖拽或点击选择音频文件</small>
+                  </div>
+                  <button class="ghost-action wide" id="pickBtn" type="button">选择音频文件</button>
+                </div>
+                <div class="upload-card-section">
+                  <label class="field-label" for="titleInput">歌曲�?/label>
+                  <input id="titleInput" class="text-input" placeholder="默认使用文件�? />
+                </div>
+                <div class="upload-card-section">
+                  <div class="button-row">
+                    <button class="start-button" id="startBtn" type="button">上传�?Suno</button>
+                    <button class="stop-button" id="stopBtn" type="button">停止上传</button>
+                  </div>
+                </div>
+                <div class="upload-card-section">
+                  <button class="ghost-action wide" id="openResultBtn" type="button" disabled>打开上传页面</button>
+                </div>
+              </section>
+              <section class="panel status-card">
+                <div class="panel-title">运行状�?/div>
+                <h3 id="mainStatus">等待开�?/h3>
+                <div class="progress-meter"><div id="progressBar"></div></div>
+                <div class="log-panel" id="logPanel"></div>
+              </section>
+              <section class="panel lyrics-card">
+                <div class="panel-title">歌词处理</div>
+                <label class="field-label" for="lyricsInput">原歌�?/label>
+                <textarea id="lyricsInput" class="lyrics-input" placeholder="把歌词粘贴到这里..."></textarea>
+                <div class="button-row">
+                  <button class="mini-button mint" id="homophoneBtn" type="button">替换同音�?/button>
+                  <button class="mini-button blue" id="pinyinBtn" type="button">转拼�?/button>
+                </div>
+                <label class="field-label" for="lyricsOutput">处理结果</label>
+                <textarea id="lyricsOutput" class="lyrics-output" readonly placeholder="结果会显示在这里..."></textarea>
+                <button class="ghost-action wide" id="copyLyricsBtn" type="button">复制结果</button>
+              </section>
+            </div>
+          </section>
+
+          <section class="module-page" id="unlockerPage">
+            <div class="page-heading illustrated">
+              <div><p class="kicker">Audio Converter</p><h2>音频文件解密 / 格式转换</h2><span>支持已内置解密格式与开放音频格式互相转�?/span></div>
+              <div class="peek-cat"></div>
+            </div>
+            <div class="unlocker-grid refined">
+	              <section class="panel unlock-step choose">
+	                <div class="step-title"><b>1</b><span>选择加密文件</span></div>
+	                <p class="muted">支持 kgm / kgma / vpr / kgg，以�?mp3 / wav / flac / ogg / m4a / aac / ape / wma 等开放音频互�?/p>
+	                <div class="button-row">
+	                  <button class="mini-button blue" id="unlockerPickFilesBtn" type="button">选择文件</button>
+	                  <button class="mini-button pink" id="unlockerClearBtn" type="button">清空</button>
+	                </div>
+                <div class="unlock-choose-grid">
+	                  <div class="unlocker-droparea" id="unlockerDropArea">
+	                    <span>上传</span>
+	                    <strong>拖拽加密音频文件到此�?/strong>
+	                    <small>或点击此区域选择文件</small>
+	                  </div>
+                  <div class="unlocker-selected-card">
+                    <strong id="unlockerFilesSummary">尚未选择</strong>
+                    <small id="unlockerFilesHint">已选文件会显示在这�?/small>
+                    <div class="unlocker-filelist" id="unlockerFileList"></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="panel unlock-step output">
+                <div class="step-title"><b>2</b><span>输出设置</span></div>
+                <label class="field-label" for="unlockerOutputDirLabel">输出�?/label>
+                <div class="path-line">
+                  <strong id="unlockerOutputDirLabel">尚未选择</strong>
+                  <button class="mini-button blue" id="unlockerPickOutputBtn" type="button">浏览</button>
+                  <button class="mini-button soft" id="unlockerOpenOutputBtn" type="button">打开</button>
+                </div>
+                <small id="unlockerOutputDirHint" class="muted">解密 / 转码后的成品会输出到这里</small>
+                <label class="field-label" for="unlockerFormat">输出格式</label>
+                <select id="unlockerFormat" class="text-input">
+                  <option value="mp3" selected>MP3（VBR · 推荐上传 Suno�?/option>
+                  <option value="wav">WAV（pcm_s16le · 44.1k�?/option>
+                  <option value="flac">FLAC（无损压缩）</option>
+                  <option value="ogg">OGG（Vorbis�?/option>
+                  <option value="m4a">M4A（AAC 192k�?/option>
+                  <option value="aac">AAC�?92k�?/option>
+                  <option value="opus">OPUS�?60k�?/option>
+                  <option value="original">原始格式（仅解密不转码）</option>
+                </select>
+                <label class="field-label" for="unlockerQuality">MP3 质量�?span id="unlockerQualityValue">2</span>�?=最�?· 9=最低）</label>
+                <input id="unlockerQuality" type="range" min="0" max="9" step="1" value="2" />
+                <div class="button-row strong-actions">
+                  <button class="start-button" id="unlockerStartBtn" type="button">开始转�?/button>
+                  <button class="stop-button" id="unlockerCancelBtn" type="button">取消</button>
+                </div>
+              </section>
+
+              <section class="panel unlock-step progress">
+                <div class="step-title"><b>3</b><span>进度与状�?/span></div>
+                <label class="field-label">转换进度</label>
+                <div class="progress-line"><div class="progress-meter small-meter"><div id="unlockerProgress"></div></div><strong>0%</strong></div>
+                <label class="field-label">运行日志</label>
+                <strong id="unlockerStatus">等待开�?/strong>
+                <small id="unlockerSummary">尚未运行</small>
+                <div class="log-panel unlocker-log" id="unlockerLog"></div>
+              </section>
+
+              <section class="panel unlock-step formats">
+                <div class="step-title"><b>4</b><span>支持的格�?/span></div>
+                <p class="muted">已内置酷狗解密与开放音频互转；受保护平台格式会给出明确诊断提示</p>
+                <div class="format-list">
+                  <span>kgm<small>酷狗音乐</small></span><span>kgma<small>酷狗音乐</small></span>
+                  <span>vpr<small>酷我音乐</small></span><span>kgg<small>酷我音乐</small></span>
+                  <span>mp3<small>开放音�?/small></span><span>wav<small>开放音�?/small></span>
+                  <span>flac<small>开放音�?/small></span><span>ogg<small>开放音�?/small></span>
+                  <span>m4a<small>开放音�?/small></span><span>ape<small>开放音�?/small></span>
+                </div>
+              </section>
+
+              <section class="panel unlock-next">
+                <div>
+                  <strong>解密完成后，可直接进入剪辑模�?/strong>
+                  <small>对解密后的音频进行波形编辑、裁剪拼接，进入退出等操作</small>
+                </div>
+                <div class="unlock-next-actions">
+                  <button class="ghost-action" id="unlockerUseClipBtn" type="button">进入剪辑</button>
+                  <button class="start-button" id="unlockerUseUploadBtn" type="button">上传�?Suno</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="module-page" id="editorPage">
+            <div class="page-heading">
+              <div><p class="kicker">Wave Editor</p><h2>可视化音频剪�?/h2></div>
+              <span class="page-note">波形预览 · 精准剪辑 · 一键上�?/span>
+            </div>
+            <div class="editor-layout refined">
+              <section class="panel editor-info-card">
+                <div class="music-tile">�?/div>
+                <div>
+                  <strong id="editorAudioName">默认使用当前音频</strong>
+                  <small id="editorAudioPath">也可以拖拽音频到波形区或点【选择音频�?/small>
+                  <p>MP3 · 44.1kHz · 320kbps · 立体�?/p>
+                </div>
+                <div class="editor-metrics">
+                  <span>总时�?strong id="editorTotalDurationLabel">0:00.0</strong></span>
+                  <span>已选时�?strong id="editorSelectedDurationLabel">0:00.0</strong></span>
+                </div>
+                <button class="mini-button blue" id="pickEditorBtn" type="button">选择音频</button>
+              </section>
+
+	              <section class="panel waveform-card" id="editorDropArea">
+	                <div class="panel-title">波形预览</div>
+	                <div class="wave-tools"><button class="mini-button soft" id="waveZoomOutBtn" type="button">缩小</button><button class="mini-button soft" id="waveZoomInBtn" type="button">放大</button><button class="mini-button soft" id="waveZoomFitBtn" type="button">适应</button></div>
+		                <div class="wave-shell main-wave" id="mainWaveShell">
+		                  <canvas id="waveformCanvas" width="960" height="220" aria-label="音频波形"></canvas>
+		                  <div class="wave-playhead" id="wavePlayhead" style="display:none"></div>
+		                </div>
+		                <div class="timeline-player-row">
+		                  <button class="editor-play-btn" id="editorPlayBtn" type="button" title="播放/暂停">�?/button>
+		                  <span class="playback-time" id="playbackTimeLabel">0:00.0</span>
+		                  <div class="mini-timeline" id="clipTimeline">
+		                    <canvas id="miniWaveformCanvas" width="960" height="62" aria-label="缩略波形"></canvas>
+		                    <div class="timeline-selection" id="timelineSelection">
+		                      <span class="timeline-handle start" data-handle="start"></span>
+		                      <span class="timeline-handle end" data-handle="end"></span>
+		                    </div>
+		                  </div>
+		                </div>
+		                <audio id="editorPlayer" style="display:none"></audio>
+	              </section>
+
+              <section class="panel controls-card time-control">
+                <div class="panel-title">时间控制</div>
+                <div class="time-fields">
+                  <label><span class="field-label">开始时�?/span><input id="clipStartInput" class="number-input" type="text" inputmode="decimal" value="0:00.0" placeholder="�?�?�?�? /></label>
+                  <label><span class="field-label">结束时间</span><input id="clipEndInput" class="number-input" type="text" inputmode="decimal" value="0:30.0" placeholder="�?�?�?�? /></label>
+                </div>
+                <div class="range-pair">
+                  <label><span class="field-label">开始位�?/span><input id="clipStartRange" type="range" min="0" max="30" step="0.1" value="0" /></label>
+                  <label><span class="field-label">结束位置</span><input id="clipEndRange" type="range" min="0.1" max="30" step="0.1" value="30" /></label>
+                </div>
+              </section>
+
+              <section class="panel controls-card param-control">
+                <div class="panel-title">参数设置</div>
+                <div class="time-fields">
+                  <label><span class="field-label">淡入(�?</span><input id="fadeInInput" class="number-input" type="number" min="0" step="0.1" value="0" /></label>
+                  <label><span class="field-label">淡出(�?</span><input id="fadeOutInput" class="number-input" type="number" min="0" step="0.1" value="0" /></label>
+                  <label><span class="field-label">音量</span><input id="volumeInput" class="number-input" type="number" min="0.05" max="3" step="0.05" value="1" /></label>
+                </div>
+                <div class="pitch-tempo-row">
+                  <label><span class="field-label">升降�?半音)</span><input id="pitchInput" class="number-input" type="number" min="-12" max="12" step="1" value="0" /></label>
+                  <label><span class="field-label">音分(Cents)</span><input id="centsInput" class="number-input" type="number" min="-100" max="100" step="1" value="0" /></label>
+	                  <label><span class="field-label">速度</span><input id="tempoInput" class="number-input" type="number" min="0.5" max="2" step="0.001" value="1" /></label>
+                </div>
+                <div class="tempo-presets">
+                  <button class="tempo-chip" type="button" data-tempo="0.5">0.5x</button><button class="tempo-chip" type="button" data-tempo="0.75">0.75x</button>
+                  <button class="tempo-chip active" type="button" data-tempo="1">1x</button><button class="tempo-chip" type="button" data-tempo="1.25">1.25x</button>
+                  <button class="tempo-chip" type="button" data-tempo="1.5">1.5x</button><button class="tempo-chip" type="button" data-tempo="2">2x</button>
+                </div>
+              </section>
+
+              <section class="panel editor-actions">
+                <div class="clip-meta"><span id="clipDurationLabel">时长�?.0 �?/span><span id="clipStatus">等待选择音频</span></div>
+                <div class="button-row editor-action-row">
+                  <div class="editor-action-left">
+                    <button class="mini-button mint" id="previewClipBtn" type="button">试听片段</button>
+                    <button class="mini-button pink" id="previewProcessedBtn" type="button">试听处理</button>
+                    <button class="mini-button blue" id="exportClipBtn" type="button">导出剪辑</button>
+                    <button class="mini-button purple" id="useClipBtn" type="button">使用剪辑</button>
+                    <button class="mini-button soft" id="undoClipBtn" type="button" disabled>撤回剪辑</button>
+                    <button class="mini-button mint" id="clipToUvrBtn" type="button">剪辑后消�?/button>
+                    <button class="ghost-action" id="openClipDirBtn" type="button">打开剪辑目录</button>
+                  </div>
+                  <button class="start-button suno-upload-btn" id="clipToSunoBtn" type="button">上传到Suno</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="module-page" id="separationPage">
+            <div class="page-heading">
+              <div><p class="kicker">Vocal Remover</p><h2>输入音频</h2></div>
+              <span class="model-pill">当前模型�?_HP-Vocal-UVR</span>
+            </div>
+            <div class="separation-layout refined">
+              <section class="panel separation-card">
+                <div class="panel-title">输入音频</div>
+                <div class="drop-card separation-drop" id="separationDropArea"><span class="music-icon">�?/span><strong id="separationAudioName">默认使用当前音频</strong><small id="separationAudioPath">拖拽或点击选择音频进行消音</small></div>
+                <div class="button-row"><button class="mini-button blue" id="pickSeparationBtn" type="button">选择音频</button><button class="start-button" id="startSeparationBtn" type="button">开始消�?/button><button class="stop-button" id="cancelSeparationBtn" type="button">取消</button></div>
+              </section>
+              <section class="panel separation-card">
+                <div class="panel-title">处理进度</div>
+                <strong id="separationStatus">等待开�?..</strong>
+                <div class="progress-meter small-meter"><div id="separationProgress"></div></div>
+                <small id="separationOutputDir">输出目录会显示在这里</small>
+                <div class="mini-log"><p>运行状态：等待�?/p><p>已加载模型：4_HP-Vocal-UVR</p></div>
+              </section>
+              <section class="panel separation-result">
+                <div class="panel-title">输出结果</div>
+                <div class="result-buttons">
+                  <button class="result-card green" id="useInstrumentalBtn" type="button"><strong>伴奏（无人声�?/strong><span>使用伴奏上传</span></button>
+                  <button class="result-card blue" id="useVocalsBtn" type="button"><strong>人声（纯人声�?/strong><span>使用人声上传</span></button>
+                </div>
+                <button class="ghost-action wide" id="openSeparationDirBtn" type="button">打开输出目录</button>
+              </section>
+              <section class="panel preview-strip">
+                <div class="panel-title">处理结果预览</div>
+                <div class="stem-row green" data-stem="instrumental">
+                  <div class="stem-name"><span>�?/span><strong>伴奏</strong><small>无人�?/small></div>
+                  <button class="stem-play" id="instrumentalPlayBtn" type="button">�?/button>
+                  <div class="stem-wave-container" id="instrumentalWaveContainer">
+                    <canvas class="stem-waveform-canvas" id="instrumentalWaveCanvas" height="48"></canvas>
+                    <div class="stem-playhead" id="instrumentalPlayhead"></div>
+                  </div>
+                  <input class="stem-volume" id="instrumentalVolume" type="range" min="0" max="1" step="0.01" value="0.75" />
+                  <button class="stem-action" id="instrumentalExportBtn" type="button">导出</button>
+                  <button class="stem-action" id="instrumentalListenBtn" type="button">试听</button>
+                  <button class="stem-action" id="instrumentalMoreBtn" type="button">更多</button>
+                </div>
+                <div class="stem-row blue" data-stem="vocals">
+                  <div class="stem-name"><span>🎙</span><strong>人声</strong><small>纯人�?/small></div>
+                  <button class="stem-play" id="vocalsPlayBtn" type="button">�?/button>
+                  <div class="stem-wave-container" id="vocalsWaveContainer">
+                    <canvas class="stem-waveform-canvas" id="vocalsWaveCanvas" height="48"></canvas>
+                    <div class="stem-playhead" id="vocalsPlayhead"></div>
+                  </div>
+                  <input class="stem-volume" id="vocalsVolume" type="range" min="0" max="1" step="0.01" value="0.75" />
+                  <button class="stem-action" id="vocalsExportBtn" type="button">导出</button>
+                  <button class="stem-action" id="vocalsListenBtn" type="button">试听</button>
+                  <button class="stem-action" id="vocalsMoreBtn" type="button">更多</button>
+                </div>
+              </section>
+              <section class="panel warm-tip">
+                <strong>温馨提示</strong>
+                <span>消音效果受原始音频质量、混音复杂度等因素影�?· 高质量音频可获得更好的分离效�?· 处理完成后可试听预览效果</span>
+              </section>
+            </div>
+          </section>
+
+          <section class="module-page" id="historyPage">
+            <div class="page-heading">
+              <div><p class="kicker">History</p><h2>上传历史</h2></div>
+              <div class="history-actions-top"><button class="mini-button blue" id="refreshHistoryBtn" type="button">刷新历史</button><button class="mini-button soft danger" id="clearHistoryBtn" type="button">清空历史</button></div>
+            </div>
+            <section class="panel history-panel">
+              <div class="history-toolbar">
+                <input id="historySearchInput" class="text-input" placeholder="搜索歌曲名或文件�?.." />
+                <button class="filter-chip active" type="button" data-history-filter="all">全部</button>
+                <button class="filter-chip" type="button" data-history-filter="success">成功</button>
+                <button class="filter-chip" type="button" data-history-filter="failed">失败</button>
+                <button class="filter-chip" type="button" data-history-filter="standard">标准</button>
+                <button class="filter-chip" type="button" data-history-filter="fast">快�?/button>
+              </div>
+              <div class="history-stats"><div><strong id="historyTotalCount">0</strong><span>全部记录</span></div><div><strong id="historySuccessCount">0</strong><span>成功上传</span></div><div><strong id="historyFailedCount">0</strong><span>失败记录</span></div></div>
+              <div class="history-list" id="historyList"></div>
+            </section>
+          </section>
+        </section>
+      </section>
+    </main>
+    <div class="update-modal hidden" id="updateNotice" role="dialog" aria-modal="true" aria-labelledby="updateNoticeTitle">
+      <div class="update-card">
+        <div class="update-badge">V2.0.4</div>
+        <h2 id="updateNoticeTitle">更新公告</h2>
+        <p>本次重点修复音频处理流程，并新增开放音频格式互相转换�?/p>
+        <ul>
+          <li>新增 mp3 / wav / flac / ogg / m4a / aac / opus 等格式互转�?/li>
+          <li>新增 ape / wma / alac / oga 输入转换支持�?/li>
+          <li>修复普通音频误走酷狗解密前置检查的问题�?/li>
+          <li>新增 .tkm 文件识别提示�?/li>
+          <li>优化受保护音乐格式失败日志，避免误判为程序崩溃�?/li>
+        </ul>
+        <button class="start-button wide" id="updateNoticeCloseBtn" type="button">知道�?/button>
+      </div>
+    </div>
+    <script src="./app.js"></script>
+  </body>
+</html>

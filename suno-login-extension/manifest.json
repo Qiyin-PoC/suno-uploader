@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "期音科技 Suno 登录助手",
+  "version": "5.0.0",
+  "description": "在用户确认配对后，将当前 Suno 登录状态连接到本机 Studio。",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "cookies"
+  ],
+  "host_permissions": [
+    "https://suno.com/*",
+    "https://www.suno.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
