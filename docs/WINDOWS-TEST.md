@@ -43,7 +43,8 @@ Windows ARM 上运行 x64 包的结果应单独标注，不能替代原生 x64 W
 ## 云端执行入口
 
 当前源码的 `.github/workflows/windows-preview.yml` 直接 checkout 仓库，不需要源码 ZIP。
-在 GitHub Actions 选择 Windows preview acceptance，选择交接分支后手动 Run workflow。
+推送 codex/windows-handoff-* 分支会自动触发 Windows preview acceptance。
+工作流合入默认分支后，也可在 GitHub Actions 选择该流程和目标分支手动 Run workflow。
 自动构建会运行 Windows Server 2022 x64 上的测试、冻结引擎自检与 NSIS 打包；结果下载为
 `windows-preview-internal-qa` artifact，保留 3 天。还需 Windows 10/11 普通用户桌面验收。
 早期远端试验分支可能残留 ZIP 解压版 workflow；请使用本次交接分支中的直接 checkout 版本。
