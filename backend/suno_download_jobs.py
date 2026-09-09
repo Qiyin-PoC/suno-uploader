@@ -411,7 +411,7 @@ class DownloadManager:
             self._check_cancel(cancel_event)
             self._update(job_id, phase="verifying", message="正在校验音频完整性…",
                          progress=None, indeterminate=True)
-            verify = self._input_args(ffmpeg, converted, _DEMUXERS[format])
+            verify = self._input_args(ffmpeg, converted, _DEMUXERS[container if format == "m4a" else format])
             verify += ["-map", "0:a:0", "-vn", "-sn", "-dn", "-f", "null", "-"]
             decoded_seconds = self._run_ffmpeg(verify, cancel_event, job_id, duration,
                                                converted, "VERIFY_FAILED")
@@ -430,8 +430,9 @@ class DownloadManager:
                         target.write(chunk)
                     target.flush()
                     os.fsync(target.fileno())
+                saved_extension = original_ext if format == "m4a" else format
                 for number in range(1, 10001):
-                    filename = f"{title}{'' if number == 1 else f' ({number})'}.{format}"
+                    filename = f"{title}{'' if number == 1 else f' ({number})'}.{saved_extension}"
                     candidate = output_dir / filename
                     # Commit and cancellation have a single linearization point.
                     with self._lock:

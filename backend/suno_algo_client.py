@@ -31,7 +31,7 @@ def algo_mode() -> str:
 
 
 def remote_enabled() -> bool:
-    return algo_mode() in {"auto", "remote"}
+    return algo_mode() == "remote" or (algo_mode() == "auto" and bool(os.environ.get("GAOBAI_ALGO_API_URL") or DEFAULT_ALGO_API_URL))
 
 
 def _api_base() -> str:

@@ -44,9 +44,9 @@ const state = {
   busy: false,
   theme: "light",
   // 内部使用版：授权恒为有效（永久），不再依赖官网账号/激活/软件锁
-  licenseValid: true,
-  licenseReasonCode: "internal_permanent",
-  licenseCountdown: "永久",
+  licenseValid: false,
+  licenseReasonCode: "account_not_logged_in",
+  licenseCountdown: "未登录",
   licenseExpiresAt: null,
   licenseTimer: null,
   licenseExpiryCheckInFlight: false,
@@ -423,7 +423,6 @@ function setBusy(busy) {
   if (!busy && state.taskWasBusy) {
     state.taskWasBusy = false;
     clearTaskPill();
-    $("mainStatus").textContent = "准备就绪";
   }
   if (busy) {
     state.taskWasBusy = true;
@@ -1525,6 +1524,12 @@ function handleBackendEvent(event) {
     log(event.message || "");
   } else if (event.type === "status") {
     if (event.detail) return;
+    if (event.loginPhase) {
+      setStatus("等待 Suno 登录", "登录中");
+      setUploadNotice(event.message || "请在专用浏览器窗口里完成登录。", "warn");
+      if (event.progress !== undefined) setProgress(event.progress);
+      return;
+    }
     const onBeat2x = state.speed === "onbeat2x";
     const title = onBeat2x ? onBeat2xStatusTitle(event) : uploadStatusTitle(event.message);
     if (onBeat2x) {
@@ -1670,7 +1675,8 @@ function handleBackendEvent(event) {
     setBusy(false);
     setStatus("任务失败", "任务失败", "error");
     setUploadEtaBadge("上传失败", "请查看日志", "error");
-    log(`任务失败，退出码：${event.code}`);
+    setUploadNotice(event.message || "任务未完成，请重试。", "error");
+    log(event.message || `任务失败${event.code !== undefined ? `，退出码：${event.code}` : ""}`);
     // 检测版权拒收，输出友好中文建议到日志（不弹窗）
     const recentLog = ($("logPanel") && $("logPanel").innerText) || "";
     if (/版权指纹|片段被 Suno 拒收|片段被拒绝/.test(recentLog)) {
@@ -1704,8 +1710,6 @@ function handleBackendEvent(event) {
     setTimeout(clearTaskPill, 2000);
   } else if (event.type === "idle") {
     setBusy(false);
-    setStatus("准备就绪");
-    resetUploadEta();
   }
 }
 
@@ -3064,10 +3068,7 @@ function shouldLockFromOnlineLicense(status) {
   return !isNetworkOnlyLicenseError(status);
 }
 
-async function runStartupLicenseVerify(localStatus) {
-  // 内部使用版：不做启动授权核对
-  updateLicenseUI({ ok: true, valid: true, is_permanent: true });
-}
+async function runStartupLicenseVerify() { updateLicenseUI(await window.gaobai.licenseStatus()); }
 
 function accountInitials(name) {
   const text = String(name || "GB").trim();
@@ -3311,305 +3312,27 @@ function runStartupBackgroundTasks(localStatus) {
 }
 
 async function initLicense() {
-  // 内部使用版：授权恒为永久有效，不做任何联网核对或激活引导
-  updateLicenseUI({ ok: true, valid: true, is_permanent: true });
-  runStartupBackgroundTasks(null);
-  startPolling();
+  try { updateLicenseUI(await window.gaobai.licenseStatus()); }
+  catch { updateLicenseUI({valid:false, message:'无法连接账号服务'}); }
 }
 
-// ============================================================================
-// 启动核对失败 → 引导弹窗
-//  - 一码一机：reason_code=device_already_bound → 弹"换绑"提示
-//  - 到期/失效：reason_code=license_expired/license_disabled/license_not_found/...
-//  - 网络异常：reason_code=license_network_error
-//  - 严重失败（人工审核 / 封禁）：卡片整体变红
-// ============================================================================
-const ACTIVATION_PROMPTS = {
-  account_not_logged_in: {
-    icon: "🔒",
-    title: "登录官网账号",
-    meta: "未激活",
-    severity: "warning",
-    primary: { text: "登录官网账号", action: "accountLogin" },
-    secondary: null,
-  },
-  account_logged_out: {
-    icon: "🔒",
-    title: "登录官网账号",
-    meta: "已退出登录",
-    severity: "warning",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: null,
-  },
-  account_no_entitlement: {
-    icon: "🛍",
-    title: "当前账号暂无软件权益",
-    meta: "未激活",
-    severity: "warning",
-    primary: { text: "前往官网商城", action: "store" },
-    secondary: { text: "切换账号", action: "accountLogin" },
-  },
-  account_network_error: {
-    icon: "📡",
-    title: "账号权益验证失败",
-    meta: "网络异常",
-    severity: "warning",
-    primary: { text: "稍后重试", action: "retry" },
-    secondary: { text: "重新登录", action: "accountLogin" },
-  },
-  membership_required: {
-    icon: "🛍",
-    title: "当前账号暂无软件权益",
-    meta: "需要购买会员",
-    severity: "warning",
-    primary: { text: "前往官网商城", action: "store" },
-    secondary: { text: "切换账号", action: "accountLogin" },
-  },
-  entitlement_expired: {
-    icon: "⏰",
-    title: "会员权益已到期",
-    meta: "需要续费",
-    severity: "warning",
-    primary: { text: "前往官网商城续费", action: "store" },
-    secondary: { text: "切换账号", action: "accountLogin" },
-  },
-  device_limit_reached: {
-    icon: "🚫",
-    title: "绑定设备已达上限",
-    meta: "请释放设备名额",
-    severity: "warning",
-    primary: { text: "设备管理", action: "devices" },
-    secondary: { text: "切换账号", action: "accountLogin" },
-  },
-  concurrent_limit_reached: {
-    icon: "🚫",
-    title: "在线设备已达上限",
-    meta: "请退出其他设备",
-    severity: "warning",
-    primary: { text: "设备管理", action: "devices" },
-    secondary: { text: "重新登录", action: "accountLogin" },
-  },
-  session_expired: {
-    icon: "🔒",
-    title: "登录会话已过期",
-    meta: "需要重新登录",
-    severity: "warning",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: null,
-  },
-  session_replaced: {
-    icon: "🔒",
-    title: "登录会话已被替换",
-    meta: "账号已在其他位置重新登录",
-    severity: "warning",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: null,
-  },
-  device_mismatch: {
-    icon: "🔐",
-    title: "设备验证不匹配",
-    meta: "禁止使用复制的登录凭证",
-    severity: "critical",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: null,
-  },
-  session_service_unavailable: {
-    icon: "📡",
-    title: "账号服务暂时不可用",
-    meta: "会员功能已暂停",
-    severity: "warning",
-    primary: { text: "稍后重试", action: "retry" },
-    secondary: null,
-  },
-  missing_license_code: {
-    icon: "🔒",
-    title: "登录官网账号",
-    meta: "未激活",
-    severity: "warning",
-    primary: { text: "登录官网账号", action: "accountLogin" },
-    secondary: null,
-  },
-  license_not_found: {
-    icon: "❓",
-    title: "账号权益不存在",
-    meta: "核对失败",
-    severity: "warning",
-    primary: { text: "登录官网账号", action: "accountLogin" },
-    secondary: { text: "前往官网商城", action: "store" },
-  },
-  invalid_license_code: {
-    icon: "❓",
-    title: "账号权益验证失败",
-    meta: "长度不对",
-    severity: "warning",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: { text: "前往官网商城", action: "store" },
-  },
-  license_expired: {
-    icon: "⏰",
-    title: "授权已过期",
-    meta: "需要续费",
-    severity: "warning",
-    primary: { text: "前往官网商城续费", action: "store" },
-    secondary: { text: "切换账号", action: "accountLogin" },
-  },
-  license_disabled: {
-    icon: "🚫",
-    title: "授权已被停用",
-    meta: "需要联系管理员",
-    severity: "critical",
-    primary: { text: "联系管理员", action: "contact" },
-    secondary: null,
-  },
-  deactivated: {
-    icon: "🔓",
-    title: "设备已解绑",
-    meta: "需要重新激活",
-    severity: "warning",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: { text: "联系管理员", action: "contact" },
-  },
-  device_not_bound: {
-    icon: "🔓",
-    title: "当前设备未绑定授权",
-    meta: "需要重新激活",
-    severity: "warning",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: { text: "联系管理员", action: "contact" },
-  },
-  device_revoked: {
-    icon: "🔓",
-    title: "本地授权已失效",
-    meta: "需要重新激活",
-    severity: "warning",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: { text: "联系管理员", action: "contact" },
-  },
-  rebind_required: {
-    icon: "🔓",
-    title: "需要重新绑定设备",
-    meta: "请重新激活",
-    severity: "warning",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: { text: "联系管理员", action: "contact" },
-  },
-  device_already_bound: {
-    icon: "🚫",
-    title: "账号权益已绑定其他设备",
-    meta: "一码一机",
-    severity: "critical",
-    primary: { text: "我已解绑，重新登录", action: "accountLogin" },
-    secondary: { text: "联系管理员换绑", action: "contact" },
-    showDeviceBlock: true,
-  },
-  rebind_limit_exceeded: {
-    icon: "⚠️",
-    title: "换绑次数超限",
-    meta: "本月已达上限",
-    severity: "critical",
-    primary: { text: "联系管理员人工换绑", action: "contact" },
-    secondary: null,
-  },
-  device_limit_exceeded: {
-    icon: "🚫",
-    title: "设备数已达上限",
-    meta: "无法在更多设备使用",
-    severity: "critical",
-    primary: { text: "联系管理员解绑", action: "contact" },
-    secondary: null,
-  },
-  device_banned: {
-    icon: "🚫",
-    title: "当前设备已被封禁",
-    meta: "无法使用",
-    severity: "critical",
-    primary: { text: "联系管理员", action: "contact" },
-    secondary: null,
-  },
-  manual_review_required: {
-    icon: "⚠️",
-    title: "已进入人工审核",
-    meta: "授权状态异常",
-    severity: "critical",
-    primary: { text: "联系管理员", action: "contact" },
-    secondary: null,
-  },
-  signature_invalid: {
-    icon: "🔐",
-    title: "签名验证失败",
-    meta: "客户端签名无效",
-    severity: "critical",
-    primary: { text: "重新登录", action: "accountLogin" },
-    secondary: { text: "联系管理员", action: "contact" },
-  },
-  app_mismatch: {
-    icon: "🚫",
-    title: "应用权益不匹配",
-    meta: "当前账号权益不适用于此应用",
-    severity: "critical",
-    primary: { text: "联系管理员", action: "contact" },
-    secondary: null,
-  },
-  license_network_error: {
-    icon: "📡",
-    title: "网络异常",
-    meta: "无法连接授权服务器",
-    severity: "warning",
-    primary: { text: "稍后重试", action: "retry" },
-    secondary: null,
-  },
-};
-
-async function showActivationRequiredModal(info) {
-  // 内部使用版：激活弹窗已移除
-  return;
+async function showActivationRequiredModal() { window.dispatchEvent(new Event('commercial-open')); }
+function openActivationModal() { window.dispatchEvent(new Event('commercial-open')); }
+function promptLicenseRequired() { window.dispatchEvent(new Event('commercial-open')); }
+function requireLicense() {
+  if (state.licenseValid) return true;
+  promptLicenseRequired();
+  return false;
 }
-
-function openActivationModal() {
-  // 内部使用版：激活/账号引导已移除
-  return;
-}
-
-function promptLicenseRequired(featureName = "当前功能") {
-  // 内部使用版：授权恒放行，无需账号/激活提示
-  return;
-}
-
-function requireLicense(featureName) {
-  // 内部使用版：授权恒放行，不弹激活/账号提示
-  return true;
-}
-
-function updateLicenseUI(status) {
-  // 内部使用版：授权恒为永久有效，直接显示"已解锁"，不再有激活/倒计时逻辑
-  state.licenseValid = true;
-  state.licenseReasonCode = "internal_permanent";
-  state.licenseExpiresAt = null;
-  state.licenseCountdown = "永久";
-  state.licenseExpiryCheckDoneFor = "";
-
-  const lockedEl = $("licenseLockedEl");
-  const activeEl = $("licenseActiveEl");
-  const countdownEl = $("licenseCountdown");
-  const pillEl = $("statusPill");
-  if (pillEl) {
-    pillEl.classList.add("licensed");
-    pillEl.title = "内部使用版 · 已解锁";
-  }
-  if (lockedEl) lockedEl.style.display = "none";
-  if (activeEl) activeEl.style.display = "";
-  if (countdownEl) {
-    countdownEl.textContent = "永久";
-    countdownEl.classList.remove("license-countdown-urgent");
-  }
-
-  if (!state.busy) {
-    $("startBtn").disabled = false;
-    $("loginBtn").disabled = false;
-    $("pickBtn").disabled = false;
-  }
-  updateBatchQueueControls();
-  stopLicenseTimer();
+function updateLicenseUI(status = {}) {
+  state.licenseValid = status.ok === true && status.valid === true;
+  state.licenseReasonCode = status.reason_code || 'account_not_logged_in';
+  state.licenseExpiresAt = status.expires_at || null;
+  const active = $('licenseActiveEl');
+  if (active) active.textContent = state.licenseValid ? '授权有效' : (status.message || '请登录期音账号');
+  $('statusPill')?.classList.toggle('licensed', state.licenseValid);
+  setBusy(state.busy);
+  window.dispatchEvent(new CustomEvent('commercial-status', {detail:status}));
 }
 
 function parseLicenseExpiryMs(expiresAt) {
@@ -3633,20 +3356,9 @@ function licenseCountdownText(status = {}) {
   return `${Math.max(1, minutes)}分钟`;
 }
 
-async function lockAppForExpiredLicense(status) {
-  // 内部使用版：授权永久有效，永不锁定
-  return;
-}
-
-async function verifyLicenseExpiryNow(reason = "expiry_window") {
-  // 内部使用版：授权永久有效，无需到期核对
-  return;
-}
-
-function startLicenseTimer(status = {}) {
-  // 内部使用版：授权永久有效，无需到期计时
-  stopLicenseTimer();
-}
+async function lockAppForExpiredLicense(status) { updateLicenseUI({...status, valid:false}); }
+async function verifyLicenseExpiryNow() { await runStartupLicenseVerify(); }
+function startLicenseTimer() { stopLicenseTimer(); }
 
 function stopLicenseTimer() {
   if (state.licenseTimer) {
@@ -3676,19 +3388,9 @@ function setupWindowControls() {
   $("windowMinimizeBtn")?.addEventListener("click", () => window.gaobai.windowMinimize?.());
   $("windowMaximizeBtn")?.addEventListener("click", () => window.gaobai.windowMaximize?.());
   $("windowCloseBtn")?.addEventListener("click", () => {
-    // 顺序：先尝试 windowClose（按用户配置的 ask / minimize / exit 走），
-    //      5 秒后如果进程还在（说明 close handler 出问题或 minimize 找不到托盘），
-    //      自动用 force-quit 兜底，确保用户一定能退出。
+    // The main process owns the user's cancel/minimize/exit choice.
     if (typeof window.gaobai?.windowClose === "function") {
       window.gaobai.windowClose();
-      setTimeout(() => {
-        // 如果 5s 后进程还在，说明 close handler 走不通，
-        // （Win11 上 minimize 找不到托盘、托盘右键退不出都属于这种），
-        // 直接 force-quit 兜底。
-        if (typeof window.gaobai?.forceQuit === "function") {
-          window.gaobai.forceQuit();
-        }
-      }, 5000);
     } else {
       try { window.close(); } catch (_) {}
     }

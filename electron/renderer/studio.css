@@ -1,0 +1,101 @@
+/* Product-facing desktop layout. Legacy feature styles remain in styles.css. */
+:root {
+  --bg: #f6f7f9; --bg-soft: #f0f2f5; --surface: #fff;
+  --ink: #202733; --ink-2: #424c5c; --muted: #697486; --muted-2: #788496;
+  --line: #e6e9ee; --line-2: #d8dee7;
+  --brand: #346b58; --brand-600: #285442;
+  --grad: linear-gradient(135deg, #346b58, #346b58);
+  --grad-soft: linear-gradient(135deg, #eef5f1, #eef5f1);
+  --r-lg: 16px; --r-md: 12px; --r-sm: 8px;
+  --shadow: 0 4px 20px #20273306; --shadow-sm: none;
+}
+:root[data-theme="dark"] {
+  --bg: #171c21; --bg-soft: #1d242b; --surface: #222a32;
+  --ink: #edf1f5; --ink-2: #d1d9e1; --muted: #a5b2bf; --muted-2: #93a1af;
+  --line: #323d47; --line-2: #43505d; --brand: #80c4a4; --brand-600: #a1d9be;
+  --grad: linear-gradient(135deg, #346b58, #346b58);
+  --grad-soft: linear-gradient(135deg, #293f36, #293f36);
+}
+.app-shell { grid-template-rows: 56px minmax(0,1fr); }
+.titlebar { background: var(--surface); backdrop-filter: none; padding-left: 22px; }
+.brand-mark { border-radius: 9px; box-shadow:none; }
+.brand-copy h1 { font-size:14px; }
+.main-layout { grid-template-columns: 208px minmax(0,1fr); }
+.sidebar { padding:26px 14px 18px; background:var(--surface); }
+.nav {gap:8px;}
+.nav-item {min-height:60px; border-radius:10px; gap:10px;}
+.nav-item small {margin-top:5px; font-size:11px;}
+.nav-item.active, :root[data-theme="dark"] .nav-item.active {background:var(--grad-soft); color:var(--brand-600); box-shadow:none;}
+.nav-item.active::before {display:none;}
+.nav-item.active .nav-icon {background:none; color:var(--brand); box-shadow:none;}
+.sidebar-account {padding:12px 4px; border:0; background:transparent;}
+.avatar {border-radius:10px;}
+.avatar.guest {background:var(--bg-soft); color:var(--muted);}
+#commercialOpen {margin:6px 0 0; padding:11px; border:1px solid var(--line-2); border-radius:9px; color:var(--ink-2); background:var(--surface); font-size:12px;}
+.sidebar-cat-wrap {padding:0 4px;}
+.module-page {padding:34px 34px 48px;}
+.page-heading {align-items:center; margin-bottom:28px;}
+.page-heading h2 {font-size:27px; font-weight:650; letter-spacing:-.7px;}
+.page-heading .page-note {font-size:12px; max-width:220px; line-height:1.7;}
+.kicker {font-size:10px; letter-spacing:.18em; color:var(--muted); margin-bottom:10px;}
+.kicker::before {display:none;}
+.upload-grid {grid-template-columns:minmax(340px,1.3fr) minmax(260px,1fr); gap:22px; max-width:1200px; margin:0 auto;}
+.panel {padding:24px; box-shadow:none;}
+.section-caption {font-size:10px; font-weight:400; color:var(--muted); letter-spacing:.05em;}
+.upload-type-segmented {margin-bottom:20px;}
+.segmented {background:var(--bg-soft); border:1px solid var(--line); border-radius:9px;}
+.segmented button {border-radius:6px;}
+.segmented button.active {background:var(--surface); color:var(--ink); box-shadow:0 1px 4px #0000000a;}
+.field-label {font-size:12px; color:var(--ink-2);}
+.text-input, .lyrics-input, .lyrics-output {border-radius:8px; background:var(--surface); border-color:var(--line-2);}
+.start-button, .primary-action, .account-login-btn {border-radius:8px; box-shadow:none;}
+.start-button:hover, .primary-action:hover {box-shadow:none; background:var(--brand-600); transform:none;}
+.ghost-action, .stop-button, .mini-button {border-radius:8px; box-shadow:none;}
+#sunoExtensionBtn {width:auto; min-height:28px; font-size:11px; border:0; background:transparent; color:var(--muted); padding:0; margin-bottom:8px;}
+#sunoAccountHint {font-size:11px; line-height:1.5;}
+.drop-card {min-height:182px; border-radius:12px; border:1px dashed var(--line-2); background:var(--bg-soft);}
+.drop-card .music-icon {background:var(--surface); color:var(--brand); box-shadow:none; border:1px solid var(--line); border-radius:12px;}
+.drop-card strong, .drop-card small {max-width:100%; overflow-wrap:anywhere;}
+.drop-card:hover, .drop-card.drag {box-shadow:none; background:var(--grad-soft);}
+#pickBtn, #batchPickBtn {margin-top:8px;}
+.status-card {position:sticky; top:0; min-height:340px; gap:18px;}
+.status-card .panel-title {margin-bottom:18px;}
+.status-card h3 {font-size:24px; font-weight:600;}
+.upload-metric {border:0; border-radius:9px; padding:15px;}
+.upload-metric strong {font-size:25px; font-weight:550;}
+.upload-metric.wide strong {font-size:17px;}
+.upload-notice {line-height:1.8;}
+.upload-advanced summary {font-size:12px; color:var(--muted); cursor:pointer; padding:6px 0;}
+.upload-actions-panel {margin-bottom:0;}
+#lyricsPage .lyrics-card {max-width:900px; margin:0 auto;}
+#lyricsPage textarea {min-height:180px; line-height:1.8; padding:16px;}
+#lyricsPage .lyrics-card > .panel-title {display:none;}
+#commercialDialog {background:var(--surface); color:var(--ink); border-color:var(--line); border-radius:16px;}
+#commercialDialog input, #commercialDialog button, #commercialPayment {background:var(--surface); color:var(--ink); border-color:var(--line-2);}
+#commercialDialog button.primary-btn {background:var(--grad); color:#fff; border:0;}
+#commercialDialog small, #commercialDialog .commercial-kicker, #commercialMessage {color:var(--muted);}
+:root[data-theme="dark"] .sidebar-account {background:transparent;}
+:root[data-theme="dark"] .segmented {background:var(--bg-soft);}
+:root[data-theme="dark"] .segmented button.active {background:var(--surface); color:var(--ink);}
+@media (max-width:1050px) {
+  .main-layout {grid-template-columns:180px minmax(0,1fr);}
+  .module-page {padding:26px 22px 40px;}
+  .upload-grid {grid-template-columns:minmax(0,1fr);}
+  .status-card {position:static; min-height:0;}
+  .page-heading {align-items:flex-start; flex-direction:column; gap:6px;}
+  .page-heading .page-note {max-width:none;}
+  .download-grid {grid-template-columns:minmax(0,1fr);}
+}
+@media (prefers-reduced-motion:reduce) {*, *::before, *::after {transition:none!important; animation:none!important;}}
+/* Empty drop areas have no removal action; selected-file controls stay in corners. */
+.audio-remove {right:12px; top:12px; font-size:11px; padding:5px 8px; border-radius:6px; background:var(--surface);}
+.audio-clear-x {left:12px; top:10px; width:24px; height:24px; font-size:18px;}
+.audio-remove:disabled, .audio-clear-x:disabled {display:none;}
+.upload-card > .upload-card-section:has(#sunoAccountSelect) {display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 12px; align-items:center; padding-bottom:18px; border-bottom:1px solid var(--line);}
+.upload-card > .upload-card-section:has(#sunoAccountSelect) > .field-label {grid-column:1/-1; margin:0;}
+#sunoAccountSelect {grid-column:1; grid-row:2; margin:0!important;}
+#loginBtn, #logoutBtn {grid-column:2; grid-row:2;}
+#sunoAccountHint {grid-column:1/-1; grid-row:3; margin:0!important;}
+#sunoExtensionBtn {grid-column:1/-1; grid-row:4; justify-self:start; margin:0; min-height:20px;}
+#sunoExtensionPanel {grid-column:1/-1;}
+.drop-card {min-height:140px;}

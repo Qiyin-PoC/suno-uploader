@@ -1,0 +1,27 @@
+[Unit]
+Description=Qiyin Uploader Test Account API
+After=network.target
+
+[Service]
+User=qiyin-uploader
+Group=qiyin-uploader
+WorkingDirectory=/opt/qiyin-uploader-test/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=QIYIN_DATABASE=/var/lib/qiyin-uploader-test/licensing.sqlite3
+Environment=QIYIN_PRICE_FEN=0
+Environment=QIYIN_PLAN_DAYS=30
+ExecStart=/opt/qiyin-uploader-test/venv/bin/python -m uvicorn licensing.app:create_app --factory --host 127.0.0.1 --port 18871 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/qiyin-uploader-test
+UMask=0077
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

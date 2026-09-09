@@ -33,7 +33,7 @@ class SunoDownloadBatch {
     const urls = raw.map(this.normalizeUrl);
     const invalid = urls.findIndex(url=>!url);
     if (invalid>=0) return this.reject(`第 ${invalid+1} 行不是有效的 Suno 歌曲链接，请修改后重试。`,'INVALID_URL');
-    if (!['mp3','wav'].includes(payload.format)) return this.reject('请选择 MP3 或 WAV。','INVALID_FORMAT');
+    if (!['mp3','wav','m4a'].includes(payload.format)) return this.reject('请选择 MP3、WAV 或原始音频。','INVALID_FORMAT');
     const unique = [...new Map(urls.map(url=>[new URL(url).pathname.replace(/\/$/,''),url])).values()];
     const batch = {id:crypto.randomUUID(), index:0, cancelled:false};
     this.active = batch;

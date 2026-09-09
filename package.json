@@ -1,18 +1,25 @@
 {
   "name": "suno-uploader",
   "version": "5.0.0",
-  "description": "期音科技 Suno歌曲上传器（内部使用版）",
+  "description": "期音科技 Suno 歌曲上传器",
   "main": "electron/main/main.js",
   "author": "期音科技",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "test": "node --test tests/*.test.js tests/*.test.cjs",
+    "setup:electron": "install-electron",
+    "check:package": "node scripts/check-package.js",
+    "dist:win": "electron-builder --win --x64",
+    "dist:mac": "electron-builder --mac --arm64 --x64",
+    "dist:linux": "electron-builder --linux --x64"
   },
   "devDependencies": {
-    "electron": "^44.0.0",
-    "electron-builder": "^26.15.3"
+    "@tauri-apps/cli": "^2.11.4",
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3"
   },
   "build": {
     "appId": "com.qiyin.suno.uploader",
@@ -47,12 +54,65 @@
     "win": {
       "target": [
         {
-          "target": "dir",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ]
+    },
+    "beforePack": "./scripts/before-pack.js",
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.music",
+      "hardenedRuntime": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "AudioVideo"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ]
+    },
+    "dmg": {
+      "title": "期音 · Suno 歌曲上传器",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 150,
+          "y": 180
+        },
+        {
+          "x": 390,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

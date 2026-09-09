@@ -1,0 +1,31 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: .env
+    volumes:
+      - licensing-data:/data
+      - ./secrets:/run/secrets:ro
+    restart: unless-stopped
+    networks: [payments]
+    # No published API port. Only Caddy can reach it externally.
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    environment:
+      QIYIN_DOMAIN: ${QIYIN_DOMAIN:?Set QIYIN_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    networks: [payments]
+networks:
+  payments:
+volumes:
+  licensing-data:
+  caddy-data:
+  caddy-config:

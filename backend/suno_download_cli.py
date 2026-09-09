@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import time
@@ -61,7 +62,9 @@ def _paths(args: argparse.Namespace) -> tuple[Path, Path, Path, Path]:
     root = Path(os.environ.get("GAOBAI_PROJECT_ROOT") or Path(__file__).resolve().parents[1]).resolve()
     output = Path(args.output_dir).expanduser().resolve()
     work = Path(args.work_root).expanduser().resolve() if args.work_root else root / "derived" / "suno_download"
-    ffmpeg = Path(args.ffmpeg).expanduser().resolve() if args.ffmpeg else root / "bin" / "ffmpeg.exe"
+    configured = args.ffmpeg or "ffmpeg"
+    resolved = shutil.which(configured)
+    ffmpeg = Path(resolved or configured).expanduser().resolve()
     cancel = Path(args.cancel_file).expanduser().resolve()
     return output, work, ffmpeg, cancel
 

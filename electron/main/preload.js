@@ -11,6 +11,19 @@ contextBridge.exposeInMainWorld("gaobai", {
     ipcRenderer.on("suno-download:event", listener);
     return () => ipcRenderer.removeListener("suno-download:event", listener);
   },
+  commercialPlans: () => ipcRenderer.invoke('commercial:plans'),
+  commercialOrder: payload => ipcRenderer.invoke('commercial:order', payload),
+  commercialOrderStatus: id => ipcRenderer.invoke('commercial:order-status', id),
+  onCommercialEvent: handler => {
+    const listener = (_event, result) => handler(result);
+    ipcRenderer.on('commercial:event', listener);
+    return () => ipcRenderer.removeListener('commercial:event', listener);
+  },
+  onCommercialOpen: handler => {
+    const listener = () => handler();
+    ipcRenderer.on('commercial:open', listener);
+    return () => ipcRenderer.removeListener('commercial:open', listener);
+  },
   pickAudio: () => ipcRenderer.invoke("audio:pick"),
   pickAudios: () => ipcRenderer.invoke("audio:pick-multiple"),
   getSunoAccounts: () => ipcRenderer.invoke("suno:accounts"),

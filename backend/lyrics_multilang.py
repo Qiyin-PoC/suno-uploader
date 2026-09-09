@@ -106,13 +106,11 @@ def process_cantonese(text: str) -> str:
 
 def process_english_pronunciation(text: str) -> str:
     """英语 → 发音近似改写。"""
-    result = text
-    for key, val in sorted(ENG_PRONUNCIATION.items(), key=lambda x: -len(x[0])):
-        result = re.sub(
-            re.escape(key), val, result,
-            count=0, flags=re.IGNORECASE,
-        )
-    return result
+    pattern = r"(?<![A-Za-z])(?:" + "|".join(
+        re.escape(key) for key in sorted(ENG_PRONUNCIATION, key=len, reverse=True)
+    ) + r")(?![A-Za-z])"
+    return re.sub(pattern, lambda match: ENG_PRONUNCIATION[match.group().lower()],
+                  text, flags=re.IGNORECASE)
 
 
 def _kr_decompose(ch: str) -> List[str]:
@@ -132,15 +130,18 @@ def _kr_decompose(ch: str) -> List[str]:
 
 def process_korean_romanization(text: str) -> str:
     """韩语 → 罗马音。"""
+    # Initials, vowels and finals use different positional pronunciations.
+    initials = ("g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h")
+    vowels = ("a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i")
+    finals = ("", "k", "k", "k", "n", "n", "n", "t", "l", "k", "m", "l", "l", "l", "p", "l", "m", "p", "p", "t", "t", "ng", "t", "t", "k", "t", "p", "t")
     result: List[str] = []
     for ch in text:
         if "가" <= ch <= "힣":
-            parts = _kr_decompose(ch)
-            roman = "".join(KOREAN_JAMO.get(p, p) for p in parts)
-            result.append(roman)
+            offset = ord(ch) - 0xAC00
+            result.append(initials[offset // 588] + vowels[(offset % 588) // 28] + finals[offset % 28])
         else:
-            result.append(ch)
-    return " ".join(result)
+            result.append(KOREAN_JAMO.get(ch, ch))
+    return "".join(result)
 
 
 def process_thai_romanization(text: str) -> str:

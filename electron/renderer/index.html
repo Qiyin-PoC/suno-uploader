@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>期音科技 · Suno 歌曲上传器</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./commercial.css" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' file: blob:; connect-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'" />
     <link rel="stylesheet" href="./suno-download.css" />
+    <link rel="stylesheet" href="./studio.css" />
   </head>
   <body>
     <svg style="display:none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -25,7 +28,7 @@
           </div>
         </div>
         <div class="ready-pill drag-region" id="statusPill">
-          <span id="licenseActiveEl" class="license-active"><span class="ready-dot"></span>内部使用版 · 已解锁</span>
+          <span id="licenseActiveEl" class="license-active"><span class="ready-dot"></span>请登录期音账号</span>
           <span id="taskPill" class="task-pill hidden"></span>
         </div>
         <div class="window-tools">
@@ -39,16 +42,16 @@
             <div class="theme-choice-group" role="radiogroup" aria-label="显示主题">
               <button class="theme-choice" type="button" data-theme-choice="light" role="radio" aria-checked="true">
                 <span class="theme-choice-icon" aria-hidden="true">☀</span>
-                <span><strong>浅色</strong><small>蓝白玻璃</small></span>
+                <span><strong>浅色</strong><small>明亮简洁</small></span>
               </button>
               <button class="theme-choice" type="button" data-theme-choice="dark" role="radio" aria-checked="false">
                 <span class="theme-choice-icon" aria-hidden="true">◐</span>
-                <span><strong>深色</strong><small>红黑玫红</small></span>
+                <span><strong>深色</strong><small>柔和夜色</small></span>
               </button>
             </div>
             <div class="task-sound-settings" id="taskSoundSettings" aria-label="任务提示音设置">
               <div class="task-sound-heading">
-                <span><strong>任务提示音</strong><small>上传、分离或导出完成与失败时播放</small></span>
+                <span><strong>任务提示音</strong><small>任务完成或失败时播放</small></span>
                 <label class="settings-switch" title="开启或关闭任务提示音" aria-label="开启或关闭任务提示音">
                   <input id="taskSoundEnabledToggle" type="checkbox" checked />
                   <span class="settings-switch-track" aria-hidden="true"></span>
@@ -85,11 +88,15 @@
           <nav class="nav" aria-label="主导航">
             <button class="nav-item active" type="button" data-panel="uploadPage">
               <span class="nav-icon"><svg><use href="#i-upload"></use></svg></span>
-              <span><strong>Suno 歌曲上传</strong><small>上传 · 拼接 · 歌词</small></span>
+              <span><strong>上传歌曲</strong><small>创建与批量上传</small></span>
             </button>
             <button class="nav-item" type="button" data-panel="downloadPage">
               <span class="nav-icon"><svg><use href="#i-download"></use></svg></span>
-              <span><strong>Suno 歌曲下载</strong><small>MP3 / WAV 下载</small></span>
+              <span><strong>下载歌曲</strong><small>MP3 / WAV 下载</small></span>
+            </button>
+            <button class="nav-item" type="button" data-panel="lyricsPage">
+              <span class="nav-icon"><svg><use href="#i-music"></use></svg></span>
+              <span><strong>歌词工具</strong><small>发音转换与同音替换</small></span>
             </button>
             <button class="nav-item" type="button" data-panel="historyPage">
               <span class="nav-icon"><svg><use href="#i-history"></use></svg></span>
@@ -98,12 +105,13 @@
           </nav>
           <div class="sidebar-account" id="accountPanel" aria-label="期音科技账号">
             <div class="account-head">
-              <div class="avatar guest" id="accountAvatar">内</div>
-              <div class="t"><strong id="accountName">请勿传播</strong><small id="accountMeta">仅内部使用</small></div>
+              <div class="avatar guest" id="accountAvatar">期</div>
+              <div class="t"><strong id="accountName">期音账号</strong><small id="accountMeta">登录后查看授权</small></div>
             </div>
           </div>
+          <button id="commercialOpen" type="button" class="primary-btn">账号与购买</button>
           <div class="sidebar-cat-wrap">
-            <p class="sidebar-cat-help">内部使用版 · 免登录即用</p>
+            <p class="sidebar-cat-help">软件授权与 Suno 登录独立管理</p>
           </div>
         </aside>
 
@@ -124,7 +132,7 @@
                   <legend class="field-label">保存格式</legend>
                   <label class="download-format"><input type="radio" name="sunoDownloadFormat" value="mp3" checked /><span><strong>MP3</strong><small>192 kbps · 文件更小</small></span></label>
                   <label class="download-format"><input type="radio" name="sunoDownloadFormat" value="wav" /><span><strong>WAV</strong><small>48 kHz · 24 bit</small></span></label>
-                  <label class="download-format"><input type="radio" name="sunoDownloadFormat" value="m4a" /><span><strong>原始源 (m4a)</strong><small>保留 Suno Opus 编码 · 音质更好</small></span></label>
+                  <label class="download-format"><input type="radio" name="sunoDownloadFormat" value="m4a" /><span><strong>原始音频</strong><small>保留源文件编码 · 不转码</small></span></label>
                 </fieldset>
                 <div class="download-directory">
                   <div><span class="field-label">保存位置</span><p id="sunoDownloadDirectory">正在读取…</p></div>
@@ -151,12 +159,12 @@
           </section>
           <section class="module-page active" id="uploadPage">
             <div class="page-heading">
-              <div><p class="kicker">Suno Studio</p><h2>上传工作台</h2></div>
-              <span class="page-note">登录 · 选择音频 · 上传 · 歌词处理</span>
+              <div><p class="kicker">Suno Studio</p><h2>把灵感，带进 Suno。</h2></div>
+              <span class="page-note">选择音频，剩下的交给上传器。</span>
             </div>
             <div class="upload-grid">
               <section class="panel upload-card">
-                <div class="panel-title">上传工作台</div>
+                <div class="panel-title">新建上传 <span class="section-caption">音频工作区</span></div>
                 <div class="segmented upload-type-segmented" role="group" aria-label="上传方式">
                   <button class="upload-type-option active" type="button" data-upload-type="single">单曲上传</button>
                   <button class="upload-type-option" type="button" data-upload-type="batch">批量排队</button>
@@ -165,7 +173,7 @@
                   <label class="field-label" for="sunoAccountSelect">Suno 账号</label>
                   <select id="sunoAccountSelect" class="text-input" style="width:100%;margin-bottom:8px"><option value="1">账号 1</option><option value="2">账号 2</option><option value="3">账号 3</option></select>
                   <p id="sunoAccountHint" class="page-note" style="overflow-wrap:anywhere;margin:8px 0">正在读取账号…</p>
-                  <button class="ghost-action wide" id="sunoExtensionBtn" type="button">扩展登录 / 备用连接</button>
+                  <button class="ghost-action wide" id="sunoExtensionBtn" type="button">使用浏览器助手登录</button>
                   <div id="sunoExtensionPanel" hidden style="padding:12px 0">
                     <strong id="sunoPairingTarget"></strong>
                     <p class="page-note">在 Chrome / Edge 加载登录助手，在 Suno 网页登录后，将下方配对码粘贴到助手中。</p>
@@ -216,10 +224,10 @@
                     <button class="stop-button" id="stopBtn" type="button">停止上传</button>
                   </div>
                   <button class="ghost-action wide" id="openResultBtn" type="button" disabled>打开上传页面</button>
-                  <div class="button-row upload-tools-row">
+                  <details class="upload-advanced"><summary>文件管理</summary><div class="button-row upload-tools-row">
                     <button class="ghost-action" id="openSegmentsBtn" type="button" disabled>打开切片文件夹</button>
                     <button class="ghost-action danger" id="clearSegmentsBtn" type="button" disabled>清除切片</button>
-                  </div>
+                  </div></details>
                 </div>
                 <div class="upload-card-section upload-actions-panel batch-actions-panel hidden" id="batchUploadActions">
                   <button class="start-button wide" id="batchStartBtn" type="button">开始批量上传</button>
@@ -230,7 +238,7 @@
                 </div>
               </section>
               <section class="panel status-card">
-                <div class="panel-title">运行状态</div>
+                <div class="panel-title">任务进度 <span class="section-caption">实时同步</span></div>
                 <div class="upload-eta-badge hidden" id="uploadEtaBadge" aria-live="polite">
                   <span id="uploadEtaTitle">预计完成 --:--</span>
                   <small id="uploadEtaDetail">剩余计算中</small>
@@ -256,6 +264,12 @@
                 </section>
                 <div class="log-panel hidden" id="logPanel"></div>
               </section>
+
+            </div>
+          </section>
+
+          <section class="module-page" id="lyricsPage" aria-label="歌词工具">
+            <div class="page-heading"><div><p class="kicker">LYRICS</p><h2>让歌词唱得更顺口</h2></div><span class="page-note">粘贴歌词，选择转换方式，复制结果。</span></div>
               <section class="panel lyrics-card">
                 <div class="panel-title">歌词处理</div>
                 <label class="field-label" for="lyricsInput">原歌词</label>
@@ -264,10 +278,10 @@
                 <select id="lyricsMode" class="text-input">
                   <option value="homophone">中文同音替换</option>
                   <option value="pinyin">中文转拼音</option>
-                  <option value="cantonese">粤语转粤拼</option>
+                  <option value="cantonese">粤语常用词转写</option>
                   <option value="english-pron">英语发音改写</option>
-                  <option value="korean-roman">韩语转罗马音</option>
-                  <option value="thai-roman">泰语转罗马音</option>
+                  <option value="korean-roman">韩语字音转写（不含连读）</option>
+                  <option value="thai-roman">泰语常用词转写</option>
                 </select>
                 <div class="button-row lyrics-actions-row">
                   <button class="mini-button mint" id="processLyricsBtn" type="button">处理歌词</button>
@@ -276,9 +290,7 @@
                 <label class="field-label" for="lyricsOutput">处理结果</label>
                 <textarea id="lyricsOutput" class="lyrics-output" readonly placeholder="结果会显示在这里..."></textarea>
               </section>
-            </div>
           </section>
-
           <section class="module-page" id="unlockerPage">
             <div class="page-heading illustrated">
               <div><p class="kicker">Audio Converter</p><h2>音频文件解密 / 格式转换</h2><span>支持已内置解密格式与开放音频格式互相转换</span></div>
@@ -683,7 +695,26 @@
       </div>
     </div>
 
+    <dialog id="commercialDialog" aria-labelledby="commercialTitle">
+      <header><div><p class="commercial-kicker">QIYIN ACCOUNT</p><h2 id="commercialTitle">账号与授权</h2></div><button id="commercialClose" type="button" aria-label="关闭账号管理">✕</button></header>
+      <p id="commercialSummary">登录期音账号后查看授权。上传歌曲还需单独登录 Suno。</p>
+      <form id="commercialForm">
+        <label>登录邮箱<input id="commercialEmail" type="email" autocomplete="username" required maxlength="254" placeholder="name@example.com"></label>
+        <label>密码<input id="commercialPassword" type="password" autocomplete="current-password" required minlength="12" maxlength="128" placeholder="至少 12 位"></label>
+        <div class="commercial-actions"><button type="submit" class="primary-btn">登录</button><button id="commercialRegister" type="button" class="secondary-btn">注册账号</button></div>
+        <small>邮箱仅作登录名。忘记密码请联系管理员核实后重置。</small>
+      </form>
+      <section id="commercialMember" hidden>
+        <div class="commercial-actions"><button id="commercialRefresh" type="button">刷新授权</button><button id="commercialDevices" type="button">管理设备</button><button id="commercialLogout" type="button">退出登录</button></div>
+        <div id="commercialDeviceList"></div>
+        <h3>购买 / 续期</h3><p id="commercialPlan">正在读取套餐…</p>
+        <div class="commercial-actions"><button id="commercialWechat" type="button" hidden>微信支付</button><button id="commercialAlipay" type="button" hidden>支付宝</button></div>
+        <div id="commercialPayment" hidden><img id="commercialQr" width="224" height="224" alt="订单支付二维码"><p id="commercialOrderInfo"></p><button id="commercialCheckOrder" type="button">我已付款，查询结果</button><small>以支付平台确认到账为准。请核对收款商户及金额。</small></div>
+      </section>
+      <p id="commercialMessage" role="status" aria-live="polite"></p>
+    </dialog>
     <script src="./app.js"></script>
+    <script src="./commercial.js"></script>
     <script src="./suno-download.js"></script>
     <script src="./suno-accounts.js"></script>
   </body>

@@ -1,0 +1,10 @@
+.git
+node_modules
+.venv
+.env
+**/.env
+**/*.pem
+**/*.key
+data
+dist
+deploy/secrets

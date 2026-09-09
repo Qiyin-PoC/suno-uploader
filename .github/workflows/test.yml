@@ -1,0 +1,32 @@
+name: Desktop and licensing tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: npm test
+      - run: python -m pip install -r licensing/requirements.txt -r backend/requirements.txt pytest
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+      - if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - run: python -m pytest -q
+      - run: node --check electron/main/main.js
+      - run: node --check electron/renderer/app.js

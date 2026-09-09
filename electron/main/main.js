@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, shell, Tray, nativeImage, session, safeStorage } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell, Tray, nativeImage, session, safeStorage, screen } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
@@ -9,23 +9,32 @@ const https = require("https");
 const mmkvLocator = require("./mmkv-locator");
 const { installSunoDownload } = require("./suno-download");
 const { SunoAccounts } = require("./suno-accounts");
-const { AccountSessionV2 } = require("./account-session-v2");
+const { CommercialClient } = require("./commercial-client");
+const { pythonExecutable } = require("./runtime-paths");
 const { ACTIVE_QUEUE_STATUSES, PersistentUploadBatchQueue, VALID_SPEEDS } = require("./upload-batch-queue");
 
 const APP_DISPLAY_NAME = "期音科技";
 const APP_VERSION_LABEL = "V5.0.0";
-// 内部使用版：以下授权/官网账号常量不再参与授权判定
-const LICENSE_REQUIRED_MESSAGE = "该功能需要购买并激活授权码后使用";
-const LICENSE_SPOT_CHECK_RATE = 0.25;
-const LICENSE_SESSION_CACHE_MS = 3 * 60 * 1000;
-const LICENSE_BACKGROUND_REFRESH_MS = 45 * 1000;
-const ACCOUNT_PORTAL_ORIGIN = "https://gaobaijifeng.top";
-const ACCOUNT_API_ORIGIN = "https://gblicensehub.xyz";
-const ACCOUNT_V2_API_BASE = "https://gblicensehub.xyz/api/app/v2";
-const ACCOUNT_SESSION_PARTITION = "persist:gaobaijifeng-account";
-const ACCOUNT_CACHE_MS = 60 * 1000;
-const ACCOUNT_AVATAR_USER_AGENT = `QiyinTechStudio/${APP_VERSION_LABEL.replace(/^V/i, "")}`;
-const ACCOUNT_AVATAR_ALLOWED_DOMAINS = ["gaobaijifeng.top", "gblicensehub.xyz"];
+let commercialClient;
+function getCommercialClient() {
+  if (!commercialClient) {
+    const config = require('../commercial-config.json');
+    commercialClient = new CommercialClient({dataDir:app.getPath('userData'),
+      baseUrl:(!app.isPackaged && process.env.QIYIN_LICENSE_URL) || config.apiOrigin,
+      packaged:app.isPackaged, safeStorage});
+  }
+  return commercialClient;
+}
+// Only the trusted local main frame may invoke privileged desktop APIs.
+const registerIpcHandler = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, handler) => registerIpcHandler(channel, async (event, ...args) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    throw new Error('不可信的调用来源');
+  }
+  if (/^(unlocker|mmkv|selfcheck|separation|editor):/.test(channel)) return {ok:false, message:'当前版本仅提供 Suno 上传、下载及歌词功能'};
+  try { return await handler(event, ...args); }
+  catch (error) { writeLog(`操作失败: ${channel}`, 'warn'); return {ok:false, valid:false, message:'操作失败，请检查运行环境或稍后重试'}; }
+});
 
 app.setName(APP_DISPLAY_NAME);
 
@@ -115,16 +124,6 @@ let unlockerLastMmkvPath = "";
 let appTray = null;
 let trayUsable = false; // ensureTray() 真正创建出可见托盘时为 true
 let isQuitting = false;
-let licenseSessionCache = null;
-let licenseRefreshInFlight = null;
-let accountLoginWindow = null;
-let accountProfileCache = null;
-let accountRefreshInFlight = null;
-let accountLogoutInProgress = false;
-let accountLoginInProgress = false;
-let accountAutoLoginInProgress = false;
-let accountSessionV2 = null;
-const accountEmailCodeCooldowns = new Map();
 // 默认改为 "exit"：Win11 24H2+ 托盘图标经常不可见（即使 new Tray() 不抛错），
 // 默认 minimize 会让用户"按了关闭按钮就再也找不到窗口"。
 // 想用托盘的用户可以从右上角"设置"按钮主动切到 "ask" 或 "minimize"。
@@ -453,7 +452,7 @@ function backendExecutable() {
     const candidate = path.join(root, "backend", "backend.exe");
     if (fs.existsSync(candidate)) return { command: candidate, prefixArgs: [] };
   }
-  const command = process.env.GAOBAI_PYTHON || path.join(root, "python-embed", "python.exe");
+  const command = pythonExecutable(root, {packaged:app.isPackaged});
   return {
     command,
     prefixArgs: [path.join(root, "backend", "backend.py")]
@@ -463,7 +462,7 @@ function backendExecutable() {
 function pythonScriptExecutable(scriptName) {
   const root = projectRoot();
   // 用内置 python-embed 跑 backend/*.py（便于支持"原始源 m4a"等新格式，依赖已内置）
-  const command = process.env.GAOBAI_PYTHON || path.join(root, "python-embed", "python.exe");
+  const command = pythonExecutable(root, {packaged:app.isPackaged});
   return { command, prefixArgs: [path.join(root, "backend", scriptName + ".py")] };
 }
 
@@ -735,11 +734,12 @@ function transcodeUnlockedAudio(srcPath, sourceFile, outputDir, targetFormat, qu
 }
 
 function createWindow() {
+  const {width, height} = screen.getPrimaryDisplay().workAreaSize;
   mainWindow = new BrowserWindow({
-    width: 1550,
-    height: 818,
-    minWidth: 1020,
-    minHeight: 680,
+    width: Math.min(1440, width),
+    height: Math.min(818, height),
+    minWidth: Math.min(1020, width),
+    minHeight: Math.min(680, height),
     resizable: true,
     frame: false,
     backgroundColor: "#f7fbff",
@@ -748,10 +748,14 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: !app.isPackaged
     }
   });
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({action:'deny'}));
+  mainWindow.webContents.on('will-navigate', event => event.preventDefault());
   mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
   mainWindow.on("close", (event) => {
     if (isQuitting) return;
@@ -787,432 +791,6 @@ function send(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
-}
-
-function accountWindowPreferences() {
-  return {
-    partition: ACCOUNT_SESSION_PARTITION,
-    contextIsolation: true,
-    nodeIntegration: false,
-    sandbox: true,
-  };
-}
-
-function isAccountPortalUrl(target) {
-  try {
-    return new URL(target).origin === ACCOUNT_PORTAL_ORIGIN;
-  } catch (_) {
-    return false;
-  }
-}
-
-function hardenAccountPortalWindow(win) {
-  require("./account-portal").installAccountPortalNavigation(win, {
-    portalOrigin: ACCOUNT_PORTAL_ORIGIN,
-    apiOrigin: ACCOUNT_API_ORIGIN,
-    preferences: accountWindowPreferences(),
-    log: writeLog,
-  });
-}
-
-function accountAvatarUrl(user) {
-  const withVersion = (url) => {
-    const version = String(user?.avatar_version || user?.avatar_updated_at || user?.updated_at || "").trim();
-    return version ? `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(version)}` : url;
-  };
-  const directUrl = String(user?.avatar_url || user?.avatarUrl || user?.avatar || "").trim();
-  if (isAllowedAccountAvatarUrl(directUrl)) return withVersion(directUrl);
-  if (directUrl.startsWith("/storage/")) return withVersion(`${ACCOUNT_API_ORIGIN}${directUrl}`);
-  if (directUrl.startsWith("/")) return withVersion(`${ACCOUNT_PORTAL_ORIGIN}${directUrl}`);
-  const storedPath = String(user?.avatar_path || "").trim();
-  if (!storedPath) return "";
-  if (user?.avatar_disk === "public") return withVersion(`${ACCOUNT_API_ORIGIN}/storage/${storedPath.replace(/^\/+/, "")}`);
-  if (storedPath.startsWith("/")) return withVersion(`${ACCOUNT_PORTAL_ORIGIN}${storedPath}`);
-  return "";
-}
-
-function accountAuthFile() {
-  return path.join(app.getPath("userData"), "account_auth.bin");
-}
-
-function loadAccountToken() {
-  try {
-    if (!safeStorage.isEncryptionAvailable() || !fs.existsSync(accountAuthFile())) return "";
-    const raw = safeStorage.decryptString(fs.readFileSync(accountAuthFile())).trim();
-    if (raw.startsWith("{")) {
-      const stored = JSON.parse(raw);
-      return String(stored.access_token || "").trim();
-    }
-    return raw;
-  } catch (error) {
-    writeLog(`官网账号会话读取失败: ${error.message || error}`, "warn");
-    try { fs.unlinkSync(accountAuthFile()); } catch (_) {}
-    return "";
-  }
-}
-
-function saveAccountToken(token) {
-  if (!safeStorage.isEncryptionAvailable()) throw new Error("当前系统无法安全保存官网账号会话");
-  const value = String(token || "").trim();
-  if (!value) throw new Error("官网账号会话无效");
-  fs.mkdirSync(path.dirname(accountAuthFile()), { recursive: true });
-  fs.writeFileSync(accountAuthFile(), safeStorage.encryptString(value));
-}
-
-function clearAccountToken() {
-  if (accountSessionV2) accountSessionV2.clearSession();
-  try { fs.unlinkSync(accountAuthFile()); } catch (_) {}
-}
-
-function clearLocalLegacyActivation() {
-  const legacyCache = path.join(app.getPath("userData"), "license_cache.json");
-  try {
-    fs.unlinkSync(legacyCache);
-    writeLog("已清除本机旧激活码缓存，后续授权以官网账号权益为准");
-  } catch (error) {
-    if (error.code !== "ENOENT") writeLog(`清除本机旧激活码缓存失败: ${error.message || error}`, "warn");
-  }
-  clearLicenseSessionCache("account-login");
-}
-
-function requestAccountApi(pathname, options = {}) {
-  const method = options.method || "GET";
-  const token = String(options.token || "").trim();
-  const requestBody = options.body ? Buffer.from(JSON.stringify(options.body), "utf8") : null;
-  return new Promise((resolve, reject) => {
-    const request = https.request(`${ACCOUNT_API_ORIGIN}${pathname}`, {
-      method,
-      headers: {
-        Accept: "application/json",
-        ...(requestBody ? { "Content-Type": "application/json", "Content-Length": requestBody.length } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    }, (response) => {
-      let text = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk) => { text += chunk; });
-      response.on("end", () => {
-        let body = {};
-        try { body = text ? JSON.parse(text) : {}; } catch (_) { body = { message: text }; }
-        resolve({ ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode || 0, body });
-      });
-    });
-    request.setTimeout(15000, () => request.destroy(new Error("官网账号服务连接超时")));
-    request.on("error", reject);
-    if (requestBody) request.write(requestBody);
-    request.end();
-  });
-}
-
-async function syncAccountPortalSession(credentials) {
-  const manager = await ensureAccountSessionV2();
-  const token = await require("./account-portal-session").verifiedPortalToken({manager, request: requestAccountApi, credentials});
-  const accountSession = session.fromPartition(ACCOUNT_SESSION_PARTITION);
-  if (!token) {
-    await Promise.all(["gbjf_session", "gbjf_buyer"].map(name => accountSession.cookies.remove(ACCOUNT_PORTAL_ORIGIN, name)));
-    return;
-  }
-  const cookie = {
-    url: ACCOUNT_PORTAL_ORIGIN,
-    value: token,
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-    expirationDate: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
-  };
-  await Promise.all([
-    accountSession.cookies.set({ ...cookie, name: "gbjf_session" }),
-    accountSession.cookies.set({ ...cookie, name: "gbjf_buyer" }),
-  ]);
-}
-
-function normalizeAccountProfile(payload) {
-  const user = payload && payload.user;
-  if (!user || typeof user !== "object") {
-    return { ok: true, loggedIn: false, valid: false, reason_code: "account_not_logged_in" };
-  }
-
-  const now = Date.now();
-  const active = Array.isArray(payload.entitlements) ? payload.entitlements.filter((item) => {
-    if (!item || item.status !== "active") return false;
-    if (item.is_permanent || item.is_lifetime) return true;
-    if (!item.expires_at) return true;
-    const expiresAt = Date.parse(item.expires_at);
-    return !Number.isFinite(expiresAt) || expiresAt > now;
-  }) : [];
-  const entitlement = active.sort((left, right) => {
-    const leftPermanent = Boolean(left.is_permanent || left.is_lifetime);
-    const rightPermanent = Boolean(right.is_permanent || right.is_lifetime);
-    if (leftPermanent !== rightPermanent) return leftPermanent ? -1 : 1;
-    return String(right.expires_at || "").localeCompare(String(left.expires_at || ""));
-  })[0] || null;
-  const displayName = String(user.nickname || user.display_name || user.name || user.email || "期音科技用户").trim();
-  const avatarUrl = accountAvatarUrl(user);
-  const permanent = Boolean(entitlement && (entitlement.is_permanent || entitlement.is_lifetime));
-  const expiresAt = entitlement && !permanent ? (entitlement.expires_at || null) : null;
-  const durationLabel = entitlement && (entitlement.duration_label || entitlement.plan?.name || entitlement.product?.name);
-
-  return {
-    ok: true,
-    loggedIn: true,
-    valid: Boolean(entitlement),
-    reason_code: entitlement ? "account_entitlement_valid" : "account_no_entitlement",
-    user: {
-      id: user.id || user.uid || user.identity_code || "",
-      name: displayName,
-      email: user.email || "",
-      avatar_url: avatarUrl,
-    },
-    entitlement_count: active.length,
-    entitlement: entitlement ? {
-      id: entitlement.id || "",
-      source: entitlement.source || "account",
-      product_name: entitlement.product?.name || entitlement.plan?.name || "期音科技",
-    } : null,
-    is_permanent: permanent,
-    expires_at: expiresAt,
-    duration_label: permanent ? "永久权益" : (durationLabel || (expiresAt ? "会员权益" : "")),
-    countdown_text: permanent ? "永久" : (durationLabel || "会员有效"),
-  };
-}
-
-const ACCOUNT_V2_ERROR_MESSAGES = {
-  invalid_credentials: "账号或密码错误，请重新输入。",
-  membership_required: "当前账号没有有效权益，请前往商城购买。",
-  device_limit_reached: "绑定设备已达上限，请先在设备管理中解绑旧设备。",
-  concurrent_limit_reached: "同时在线设备已达上限，请先退出其他设备。",
-  session_expired: "登录会话已过期，请重新登录。",
-  session_replaced: "当前会话已被其他登录替换，请重新登录。",
-  device_mismatch: "登录凭证与当前设备不匹配，请重新登录。",
-  device_revoked: "当前设备已被解绑或停用，请重新登录。",
-  entitlement_expired: "会员权益已到期，请续费后继续使用。",
-  session_service_unavailable: "暂时无法连接账号会话服务，请稍后再试。",
-};
-
-function accountV2ErrorMessage(reasonCode, fallback = "账号服务暂时不可用，请稍后重试。") {
-  return ACCOUNT_V2_ERROR_MESSAGES[reasonCode] || fallback;
-}
-
-function normalizeV2AccountProfile(state, accountPayload = null) {
-  const remote = accountPayload && typeof accountPayload === "object" ? accountPayload : {};
-  const remoteProfile = normalizeAccountProfile(remote);
-  const entitlement = state?.entitlement || {};
-  const sessionUser = state?.user && typeof state.user === "object" ? state.user : {};
-  const remoteUser = remoteProfile.user || {};
-  const user = {
-    id: remoteUser.id || sessionUser.id || sessionUser.uid || "",
-    name: remoteUser.name || sessionUser.nickname || sessionUser.display_name || sessionUser.name || sessionUser.email || "期音科技用户",
-    email: remoteUser.email || sessionUser.email || "",
-    avatar_url: remoteUser.avatar_url || accountAvatarUrl(sessionUser) || "",
-  };
-  const permanent = Boolean(state?.is_permanent || entitlement.is_permanent || entitlement.is_lifetime);
-  const expiresAt = state?.expires_at || entitlement.expires_at || entitlement.expire_at || null;
-  return {
-    ok: true,
-    protocol_version: 2,
-    loggedIn: Boolean(state?.loggedIn),
-    valid: Boolean(state?.valid),
-    reason_code: state?.reason_code || "account_not_logged_in",
-    connection_status: state?.connection_status || "offline",
-    heartbeat_failures: Number(state?.heartbeat_failures || 0),
-    session_id: state?.session_id || "",
-    user,
-    entitlement,
-    entitlement_count: state?.valid ? 1 : 0,
-    device_limit: Number(state?.device_limit || entitlement.device_limit || 0),
-    is_permanent: permanent,
-    expires_at: expiresAt,
-    duration_label: permanent ? "永久权益" : (entitlement.duration_label || entitlement.plan?.name || "会员权益"),
-    countdown_text: permanent ? "永久" : (expiresAt ? "会员有效" : "未激活"),
-  };
-}
-
-function getAccountSessionV2() {
-  if (accountSessionV2) return accountSessionV2;
-  accountSessionV2 = new AccountSessionV2({
-    app,
-    safeStorage,
-    apiBase: ACCOUNT_V2_API_BASE,
-    appVersion: APP_VERSION_LABEL.replace(/^V/i, ""),
-    appId: "jfmhstudio",
-    log: writeLog,
-    onState: (state) => {
-      const cachedUser = accountProfileCache?.profile?.user;
-      accountProfileCache = null;
-      const cachedAccountPayload = cachedUser ? { user: cachedUser } : null;
-      send("account:event", { type: "session-status", account: normalizeV2AccountProfile(state, cachedAccountPayload) });
-    },
-  });
-  return accountSessionV2;
-}
-
-async function ensureAccountSessionV2() {
-  const manager = getAccountSessionV2();
-  await manager.initialize();
-  return manager;
-}
-
-function accountProfileToLicenseStatus(profile) {
-  const loggedIn = Boolean(profile && profile.loggedIn);
-  return {
-    ok: Boolean(profile && profile.valid),
-    valid: Boolean(profile && profile.valid),
-    source: "account",
-    reason_code: profile?.reason_code || "account_no_entitlement",
-    reason: profile?.valid
-      ? "官网账号权益有效"
-      : accountV2ErrorMessage(profile?.reason_code, loggedIn ? "当前官网账号没有可用的软件权益" : "请登录官网账号同步软件权益"),
-    expires_at: profile?.expires_at || null,
-    is_permanent: Boolean(profile?.is_permanent),
-    duration_label: profile?.duration_label || "",
-    countdown_text: profile?.countdown_text || "未激活",
-    account: profile?.user || null,
-  };
-}
-
-async function fetchAccountProfile() {
-  const manager = await ensureAccountSessionV2();
-  const state = manager.publicState();
-  if (!state.loggedIn) return normalizeV2AccountProfile(state);
-  let accountPayload = null;
-  const accessToken = String(manager.session?.portal_access_token || manager.session?.access_token || "").trim();
-  if (accessToken) {
-    try {
-      const result = await requestAccountApi("/api/account", { token: accessToken });
-      if (result.ok) accountPayload = result.body;
-      else writeLog(`账号资料同步返回 ${result.status}，保留 V2 会话授权状态`, "warn");
-    } catch (error) {
-      writeLog(`账号资料同步失败，保留 V2 会话授权状态: ${error.message || error}`, "warn");
-    }
-  }
-  return normalizeV2AccountProfile(manager.publicState(), accountPayload);
-}
-
-async function getAccountProfile(options = {}) {
-  const forceOnline = Boolean(options.forceOnline);
-  const cached = accountProfileCache;
-  if (!forceOnline && cached && Date.now() - cached.checkedAt < ACCOUNT_CACHE_MS) return cached.profile;
-  if (accountRefreshInFlight) return accountRefreshInFlight;
-
-  accountRefreshInFlight = Promise.resolve()
-    .then(async () => {
-      const manager = await ensureAccountSessionV2();
-      if (forceOnline && manager.session) await manager.heartbeat();
-      return fetchAccountProfile();
-    })
-    .then((profile) => {
-      accountProfileCache = { profile, checkedAt: Date.now() };
-      return profile;
-    })
-    .catch((error) => {
-      writeLog(`官网账号权益读取失败: ${error.message || error}`, "warn");
-      if (cached && cached.profile?.valid) {
-        return { ...cached.profile, verification_pending: true, reason_code: "account_network_error" };
-      }
-      return { ok: true, loggedIn: false, valid: false, reason_code: "account_network_error" };
-    })
-    .finally(() => {
-      accountRefreshInFlight = null;
-    });
-  return accountRefreshInFlight;
-}
-
-async function startAccountLogin() {
-  send("account:event", { type: "login-started" });
-  return { ok: true, embedded: true };
-}
-
-async function submitAccountLogin(event, payload) {
-  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-    return { ok: false, message: "登录界面不可用，请重新打开软件。" };
-  }
-  if (accountLoginInProgress) return { ok: false, message: "正在登录，请稍候。" };
-
-  const email = String(payload?.email || "").trim().toLowerCase();
-  const password = String(payload?.password || "");
-  const rememberPassword = Boolean(payload?.rememberPassword);
-  const autoLogin = Boolean(rememberPassword && payload?.autoLogin);
-  if (!/^\S+@\S+\.\S+$/.test(email)) return { ok: false, message: "请输入正确的邮箱地址。" };
-  if (!password) return { ok: false, message: "请输入密码。" };
-
-  accountLoginInProgress = true;
-  try {
-    const manager = await ensureAccountSessionV2();
-    const login = await manager.login(email, password);
-    if (manager.publicState().loggedIn) {
-      try {
-        manager.saveLoginPreferences({ email, password, rememberPassword, autoLogin });
-      } catch (error) {
-        writeLog(`账号登录偏好保存失败: ${error.message || error}`, "warn");
-      }
-    }
-    if (!login.ok) {
-      const reasonCode = login.reason_code || "session_service_unavailable";
-      return {
-        ok: false,
-        reason_code: reasonCode,
-        showStore: reasonCode === "membership_required" || reasonCode === "entitlement_expired",
-        showDevices: reasonCode === "device_limit_reached" || reasonCode === "concurrent_limit_reached",
-        message: accountV2ErrorMessage(reasonCode, login.message || "登录失败，请检查账号和密码。"),
-      };
-    }
-
-    try { await syncAccountPortalSession({ email, password }); }
-    catch (_) { writeLog("软件已登录，个人中心会在打开时重新验证网页登录。", "warn"); }
-    accountProfileCache = null;
-    const profile = await fetchAccountProfile();
-    if (!profile.loggedIn) {
-      manager.clearSession();
-      return { ok: false, message: "官网账号验证失败，请稍后重试。" };
-    }
-
-    clearLocalLegacyActivation();
-    accountProfileCache = { profile, checkedAt: Date.now() };
-    send("account:event", { type: "status", account: profile });
-    return { ok: true, account: profile };
-  } catch (error) {
-    writeLog(`官网账号登录失败: ${error.message || error}`, "warn");
-    return { ok: false, reason_code: "session_service_unavailable", message: "登录服务暂时不可用，请稍后重试。" };
-  } finally {
-    accountLoginInProgress = false;
-  }
-}
-
-async function openAccountPortal(pathname, title) {
-  const safePath = String(pathname || "/account").startsWith("/") ? String(pathname || "/account") : "/account";
-  try { await syncAccountPortalSession(); }
-  catch (error) {
-    const result = await dialog.showMessageBox(mainWindow, {type:"warning", title:"个人中心登录", message:error.message || "个人中心登录暂时不可用，请稍后重试。", buttons:["稍后重试", "重新登录软件"], defaultId:0, cancelId:0});
-    if (result.response === 1) await startAccountLogin();
-    return {ok:false};
-  }
-  if (accountLoginWindow && !accountLoginWindow.isDestroyed()) {
-    await accountLoginWindow.loadURL(`${ACCOUNT_PORTAL_ORIGIN}${safePath}`);
-    accountLoginWindow.setTitle(title);
-    accountLoginWindow.show();
-    accountLoginWindow.focus();
-    return;
-  }
-  const portalWindow = new BrowserWindow({
-    width: 1100,
-    height: 840,
-    minWidth: 860,
-    minHeight: 650,
-    parent: mainWindow || undefined,
-    autoHideMenuBar: true,
-    title,
-    webPreferences: accountWindowPreferences(),
-  });
-  hardenAccountPortalWindow(portalWindow);
-  accountLoginWindow = portalWindow;
-  portalWindow.on("closed", async () => {
-    if (accountLoginWindow === portalWindow) accountLoginWindow = null;
-    if (accountLogoutInProgress) return;
-    const profile = await getAccountProfile({ forceOnline: true });
-    send("account:event", { type: "status", account: profile });
-  });
-  await portalWindow.loadURL(`${ACCOUNT_PORTAL_ORIGIN}${safePath}`);
 }
 
 function sanitizeBackendEvent(event) {
@@ -1310,226 +888,10 @@ function runBackendJson(args, options = {}) {
   });
 }
 
-function isUsableLicenseStatus(status) {
-  if (!status || !status.ok || !status.valid) return false;
-  const riskStatus = status.risk_status || "ok";
-  const reasonCode = status.reason_code || "";
-  if (riskStatus === "manual_review_required" || status.manual_review_required) return false;
-  if (["license_disabled", "license_expired", "device_banned", "device_not_bound", "manual_review_required", "signature_invalid", "app_mismatch"].includes(reasonCode)) {
-    return false;
-  }
-  return true;
-}
-
-function clearLicenseSessionCache(reason = "") {
-  licenseSessionCache = null;
-  if (reason) writeLog(`授权会话缓存已清理: ${reason}`);
-}
-
-function rememberLicenseSession(status, onlineVerified) {
-  if (!isUsableLicenseStatus(status)) {
-    if (status && status.reason_code !== "license_network_error") {
-      clearLicenseSessionCache(status.reason_code || "license-not-usable");
-    }
-    return;
-  }
-  licenseSessionCache = {
-    status,
-    onlineVerified: Boolean(onlineVerified),
-    checkedAt: Date.now(),
-    expiresAt: Date.now() + LICENSE_SESSION_CACHE_MS,
-  };
-}
-
-function cachedLicenseSession(forceOnline) {
-  if (!licenseSessionCache) return null;
-  if (Date.now() > licenseSessionCache.expiresAt) {
-    clearLicenseSessionCache("expired");
-    return null;
-  }
-  if (forceOnline && !licenseSessionCache.onlineVerified) return null;
-  if (!isUsableLicenseStatus(licenseSessionCache.status)) {
-    clearLicenseSessionCache("invalid-status");
-    return null;
-  }
-  return licenseSessionCache;
-}
-
-async function runLicenseGuard(featureCode, options = {}) {
-  const forceOnline = Boolean(options.forceOnline);
-  const sampleOnline = Boolean(options.sampleOnline);
-  const args = ["--license-guard", featureCode];
-  if (forceOnline) args.push("--license-force-online");
-  if (sampleOnline) args.push("--license-sample-online");
-  return runBackendJson(args);
-}
-
-function runSharedOnlineLicense(args) {
-  if (licenseRefreshInFlight) return licenseRefreshInFlight;
-  licenseRefreshInFlight = runBackendJson(args)
-    .then((status) => {
-      rememberLicenseSession(status, true);
-      return status;
-    })
-    .finally(() => {
-      licenseRefreshInFlight = null;
-    });
-  return licenseRefreshInFlight;
-}
-
-function refreshLicenseInBackground(featureCode, options = {}) {
-  if (licenseRefreshInFlight) return;
-  const args = ["--license-guard", featureCode, "--license-force-online"];
-  runSharedOnlineLicense(args)
-    .then((status) => {
-      if (isUsableLicenseStatus(status)) {
-        rememberLicenseSession(status, true);
-      } else if (status && status.reason_code !== "license_network_error") {
-        clearLicenseSessionCache(status && status.reason_code ? status.reason_code : "background-invalid");
-      }
-    })
-    .catch((error) => {
-      writeLog(`后台授权刷新失败: ${error.message || error}`, "warn");
-    });
-}
-
-async function requireActiveLicense(featureCode, featureName = featureCode, options = {}) {
-  // 复刻版授权旁路：跳过官网账号权益校验，直接放行所有功能
-  return { ok: true, license: { valid: true, permanent: true } };
-}
-
-function accountApiResultMessage(result, fallback) {
-  const body = result?.body && typeof result.body === "object" ? result.body : {};
-  const errors = body.errors && typeof body.errors === "object" ? body.errors : {};
-  for (const value of Object.values(errors)) {
-    if (Array.isArray(value) && value[0]) return String(value[0]);
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  if (typeof body.message === "string" && body.message.trim()) return body.message.trim();
-  return fallback;
-}
-
-function validAccountEmail(value) {
-  return /^\S+@\S+\.\S+$/.test(String(value || "").trim());
-}
-
-function validAccountPassword(value) {
-  const password = String(value || "");
-  return password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password);
-}
-
-async function sendAccountEmailCode(payload) {
-  const email = String(payload?.email || "").trim().toLowerCase();
-  const purpose = String(payload?.purpose || "").trim();
-  if (!validAccountEmail(email)) return { ok: false, message: "请输入正确的邮箱地址。" };
-  if (!new Set(["register", "password_reset"]).has(purpose)) {
-    return { ok: false, message: "验证码用途无效。" };
-  }
-  const cooldownKey = `${purpose}:${email}`;
-  const retryAfter = Math.ceil(((accountEmailCodeCooldowns.get(cooldownKey) || 0) - Date.now()) / 1000);
-  if (retryAfter > 0) return { ok: false, retry_after: retryAfter, message: `请 ${retryAfter} 秒后再获取验证码。` };
-  try {
-    const result = await requestAccountApi("/api/auth/email-code", {
-      method: "POST",
-      body: { email, purpose },
-    });
-    if (!result.ok) return { ok: false, message: accountApiResultMessage(result, "验证码发送失败，请稍后重试。") };
-    accountEmailCodeCooldowns.set(cooldownKey, Date.now() + 60 * 1000);
-    return { ok: true, cooldown: 60, message: "验证码已发送，请检查邮箱。" };
-  } catch (error) {
-    writeLog(`账号邮箱验证码发送失败: ${error.message || error}`, "warn");
-    return { ok: false, message: "验证码服务暂时不可用，请稍后重试。" };
-  }
-}
-
-async function tryAccountAutoLogin() {
-  if (accountAutoLoginInProgress) return { ok: false, skipped: true };
-  accountAutoLoginInProgress = true;
-  try {
-    const manager = await ensureAccountSessionV2();
-    if (manager.publicState().loggedIn) return { ok: true, skipped: true };
-    const credentials = manager.getAutoLoginCredentials();
-    if (!credentials) return { ok: true, skipped: true };
-
-    const login = await manager.login(credentials.email, credentials.password);
-    if (!login.ok) {
-      if (login.reason_code === "invalid_credentials") manager.clearLoginPreferences({ keepEmail: true });
-      writeLog(`账号自动登录未完成: ${login.reason_code || "unknown"}`, "warn");
-      return login;
-    }
-
-    try { await syncAccountPortalSession(credentials); }
-    catch (_) { writeLog("软件已自动登录，个人中心会在打开时重新验证网页登录。", "warn"); }
-    accountProfileCache = null;
-    const profile = await fetchAccountProfile();
-    if (!profile.loggedIn) {
-      manager.clearSession();
-      return { ok: false, reason_code: "session_service_unavailable" };
-    }
-    clearLocalLegacyActivation();
-    accountProfileCache = { profile, checkedAt: Date.now() };
-    send("account:event", { type: "status", account: profile });
-    writeLog("官网账号已自动登录并同步权益");
-    return { ok: true, account: profile };
-  } catch (error) {
-    writeLog(`账号自动登录失败: ${error.message || error}`, "warn");
-    return { ok: false, reason_code: "session_service_unavailable" };
-  } finally {
-    accountAutoLoginInProgress = false;
-  }
-}
-
-async function registerAccount(payload) {
-  const name = String(payload?.name || "").trim();
-  const email = String(payload?.email || "").trim().toLowerCase();
-  const code = String(payload?.code || "").trim();
-  const password = String(payload?.password || "");
-  const confirmation = String(payload?.passwordConfirmation || "");
-  if (name.length < 2 || name.length > 30) return { ok: false, message: "昵称请输入 2 至 30 个字符。" };
-  if (!validAccountEmail(email)) return { ok: false, message: "请输入正确的邮箱地址。" };
-  if (!/^\d{6}$/.test(code)) return { ok: false, message: "请输入邮箱收到的 6 位验证码。" };
-  if (!validAccountPassword(password)) return { ok: false, message: "密码至少 8 位，并同时包含字母和数字。" };
-  if (password !== confirmation) return { ok: false, message: "两次输入的密码不一致。" };
-  try {
-    const result = await requestAccountApi("/api/auth/register", {
-      method: "POST",
-      body: {
-        name,
-        email,
-        code,
-        password,
-        password_confirmation: confirmation,
-        turnstile_token: "development-token",
-      },
-    });
-    if (!result.ok) return { ok: false, message: accountApiResultMessage(result, "注册失败，请检查填写内容。") };
-    return { ok: true, email, message: "注册成功，请使用新账号登录。" };
-  } catch (error) {
-    writeLog(`官网账号注册失败: ${error.message || error}`, "warn");
-    return { ok: false, message: "注册服务暂时不可用，请稍后重试。" };
-  }
-}
-
-async function resetAccountPassword(payload) {
-  const email = String(payload?.email || "").trim().toLowerCase();
-  const code = String(payload?.code || "").trim();
-  const password = String(payload?.password || "");
-  const confirmation = String(payload?.passwordConfirmation || "");
-  if (!validAccountEmail(email)) return { ok: false, message: "请输入正确的邮箱地址。" };
-  if (!/^\d{6}$/.test(code)) return { ok: false, message: "请输入邮箱收到的 6 位验证码。" };
-  if (!validAccountPassword(password)) return { ok: false, message: "新密码至少 8 位，并同时包含字母和数字。" };
-  if (password !== confirmation) return { ok: false, message: "两次输入的新密码不一致。" };
-  try {
-    const result = await requestAccountApi("/api/auth/password-reset", {
-      method: "POST",
-      body: { email, code, password, password_confirmation: confirmation },
-    });
-    if (!result.ok) return { ok: false, message: accountApiResultMessage(result, "密码重置失败，请检查验证码。") };
-    return { ok: true, email, message: "密码修改成功，请使用新密码登录。" };
-  } catch (error) {
-    writeLog(`官网账号密码重置失败: ${error.message || error}`, "warn");
-    return { ok: false, message: "密码重置服务暂时不可用，请稍后重试。" };
-  }
+async function requireActiveLicense(featureCode) {
+  const result = await getCommercialClient().authorize(featureCode);
+  send('commercial:event', result);
+  return result;
 }
 
 async function prepareSunoTokenForUpload(skipNetworkPreflight, accountId) {
@@ -1639,52 +1001,7 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
-  // ── MMKV 引导触发(延迟 2.5s,等窗口和 webContents 准备好) ──
-// 触发规则:
-//   - 当前已有有效链接 → 不弹(用户已经完成设置)
-//   - 用户最近 24 小时内主动关闭过引导(dismissed) → 不弹,避免反复骚扰
-//   - 否则每次启动都弹,确保新用户/重置后用户能看到引导
-setTimeout(async () => {
-  try {
-    const ext = mmkvLocator.loadDirPrefsExtended(dirPrefsFile);
 
-    // 已完成设置 → 不弹
-    if (ext.currentLink && ext.currentLink.linkPath && fs.existsSync(ext.currentLink.linkPath)) {
-      writeLog("已有 MMKV 链接,跳过引导");
-      return;
-    }
-
-    // 24 小时内主动 dismiss 过 → 不弹
-    if (ext.onboardingDismissedAt && Date.now() - ext.onboardingDismissedAt < 86400000) {
-      writeLog("用户 24h 内已 dismiss 引导,跳过");
-      return;
-    }
-
-    const preflight = mmkvLocator.loadPreflight(preflightFile);
-    let candidates = preflight.candidates || [];
-    if (candidates.length === 0) {
-      try {
-        candidates = await mmkvLocator.locateMmkvCandidates();
-        mmkvLocator.saveDirPrefsExtended(dirPrefsFile, {
-          lastScanAt: Date.now(),
-          lastScanResults: candidates,
-        });
-      } catch (e) {
-        writeLog("引导前实时扫描失败: " + e.message, "warn");
-      }
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("mmkv:onboarding-request", {
-        preflightCandidates: candidates,
-        detected: candidates.length > 0,
-        qqMusicNotInstalled: candidates.length === 0,
-      });
-      writeLog(`MMKV 引导触发: ${candidates.length > 0 ? "找到 " + candidates.length + " 个候选" : "未检测到 QQ 音乐"}`);
-    }
-  } catch (e) {
-    writeLog("MMKV 引导触发失败: " + e.message, "warn");
-  }
-}, 2500);
 });
 
 app.on("window-all-closed", () => {
@@ -1697,7 +1014,7 @@ app.on("before-quit", () => {
   pauseUploadBatchForShutdown();
   // Closing the app only marks this device offline after the server timeout.
   // Explicit account logout is the only action that unbinds the device.
-  accountSessionV2?.stopHeartbeat();
+
 });
 
 installSunoDownload({
@@ -1967,9 +1284,8 @@ ipcMain.handle("app:login", async () => {
   const id=getSunoAccounts().selectedId;
   try {
     await getSunoAccounts().stopPairing();
-    refreshLicenseInBackground("suno_login");
     const loginJob=runBackend(["--login-only"],{eventChannel:"backend:event",env:sunoEnv(id),
-      onEvent:event=>{ if(event?.type==="result" && event.loginOk) emitSunoAccounts(); }});
+      onEvent:event=>{ if(event) event.loginPhase=true; if(event?.type==="result" && event.loginOk) emitSunoAccounts(); }});
     currentJob=loginJob;
     loginJob.on("close",()=>{if(currentJob===loginJob)currentJob=null;emitSunoAccounts();send("backend:event",{type:"idle"});});
     return {ok:true,accountId:id};
@@ -3076,7 +2392,7 @@ async function launchUploadTask(payload = {}, options = {}) {
 async function launchUploadTaskImpl(payload = {}, options = {}) {
   const accountId=getSunoAccounts().id(payload.accountId || getSunoAccounts().selectedId);
   await getSunoAccounts().stopPairing();
-  if (!options.licenseChecked) {
+  { // Re-authorize every queue item, including resumed batches.
     const license = await requireActiveLicense("suno_upload", "上传 Suno", { forceOnline: true });
     if (!license.ok) return license;
   }
@@ -3449,89 +2765,24 @@ ipcMain.handle("lyrics:process", async (_event, payload) => {
   return runBackendJson(["--lyrics-mode", payload.mode, "--lyrics", payload.text || ""]);
 });
 
-ipcMain.handle("license:check", async () => {
-  // 内部使用版：授权恒为永久有效
-  return { ok: true, valid: true, is_permanent: true, permanent: true, reason_code: "internal_permanent", reason: "内部使用版 · 已解锁" };
+for (const channel of ['license:check','license:status','license:startup-verify','account:status']) {
+  ipcMain.handle(channel, () => getCommercialClient().status());
+}
+ipcMain.handle('account:submit-login', (_event, payload) => getCommercialClient().login(payload));
+ipcMain.handle('account:register', (_event, payload) => getCommercialClient().register(payload));
+ipcMain.handle('account:logout', () => getCommercialClient().logout());
+ipcMain.handle('account:login', () => { send('commercial:open', {}); return {ok:true}; });
+ipcMain.handle('commercial:plans', () => getCommercialClient().call('/v1/plans'));
+ipcMain.handle('commercial:order', async (_event, payload) => {
+  const result = await getCommercialClient().call('/v1/orders', {plan:'standard', provider:payload?.provider});
+  if (!result.ok) return result;
+  const qrImage = await require('qrcode').toDataURL(result.qr, {width:256, margin:2});
+  return {...result, qrImage};
 });
-ipcMain.handle("license:status", async () => {
-  // 内部使用版：授权恒为永久有效
-  return { ok: true, valid: true, is_permanent: true, permanent: true, reason_code: "internal_permanent", reason: "内部使用版 · 已解锁" };
-});
-ipcMain.handle("license:startup-verify", async () => {
-  // 内部使用版：授权恒为永久有效
-  return { ok: true, valid: true, is_permanent: true, permanent: true, reason_code: "internal_permanent", reason: "内部使用版 · 已解锁" };
-});
-ipcMain.handle("account:login", () => startAccountLogin());
-ipcMain.handle("account:submit-login", (event, payload) => submitAccountLogin(event, payload));
-ipcMain.handle("account:login-preferences", async () => {
-  const manager = await ensureAccountSessionV2();
-  return { ok: true, ...manager.getLoginFormPreferences() };
-});
-ipcMain.handle("account:send-email-code", (_event, payload) => sendAccountEmailCode(payload));
-ipcMain.handle("account:register", (_event, payload) => registerAccount(payload));
-ipcMain.handle("account:reset-password", (_event, payload) => resetAccountPassword(payload));
-ipcMain.handle("account:status", async () => getAccountProfile({ forceOnline: true }));
-ipcMain.handle("account:avatar-source", async (_event, payload = {}) => {
-  return resolveAccountAvatarSource(String(payload.url || "").trim());
-});
-ipcMain.handle("account:logout", async () => {
-  accountLogoutInProgress = true;
-  try {
-    if (accountLoginWindow && !accountLoginWindow.isDestroyed()) accountLoginWindow.close();
-    accountProfileCache = null;
-    const manager = await ensureAccountSessionV2();
-    const portalToken = manager.session?.portal_access_token;
-    const logoutResult = await manager.logout();
-    if (!logoutResult.ok) {
-      return {
-        ...normalizeV2AccountProfile(manager.publicState()),
-        ok: false,
-        message: accountV2ErrorMessage(logoutResult.reason_code, "退出登录失败，请稍后重试。"),
-      };
-    }
-    if (portalToken) {
-      try { await requestAccountApi("/api/auth/logout", {method:"POST", token:portalToken}); }
-      catch (_) { writeLog("网页登录会话远程退出暂时不可用，已清除本地登录。", "warn"); }
-    }
-    manager.clearLoginPreferences({ keepEmail: true });
-    clearLocalLegacyActivation();
-    const accountSession = session.fromPartition(ACCOUNT_SESSION_PARTITION);
-    await accountSession.clearStorageData({
-      storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
-    });
-    const profile = { ok: true, loggedIn: false, valid: false, reason_code: "account_logged_out" };
-    send("account:event", { type: "status", account: profile });
-    return profile;
-  } finally {
-    accountLogoutInProgress = false;
-  }
-});
-ipcMain.handle("account:open-profile", async () => {
-  await openAccountPortal("/account", "期音科技个人中心");
-  return { ok: true };
-});
-ipcMain.handle("account:open-store", async () => {
-  await openAccountPortal("/store", "期音科技软件商城");
-  return { ok: true };
-});
-ipcMain.handle("app:register", async () => runBackendJson(["--app-register"]));
-// 更新检查 / 系统公告
-ipcMain.handle("update:check", async () => runBackendJson(["--update-check"]));
-ipcMain.handle("update:mark-seen", async (_event, payload) => {
-  const version = (payload && payload.version) || "";
-  return runBackendJson(["--mark-update-seen", version]);
-});
-ipcMain.handle("announcements:list", async (_event, payload) => {
-  const args = ["--announcements"];
-  if (payload && payload.announcement_type) {
-    args.push("--announcement-type", String(payload.announcement_type));
-  }
-  return runBackendJson(args);
-});
-ipcMain.handle("announcements:mark-read", async (_event, payload) => {
-  const ids = (payload && payload.ids) || [];
-  return runBackendJson(["--mark-announcements-read", ids.join(",")]);
-});
+ipcMain.handle('commercial:order-status', (_event, id) => getCommercialClient().call('/v1/orders/'+encodeURIComponent(String(id))));
+for (const channel of ['account:login-preferences','account:send-email-code','account:reset-password','account:avatar-source','account:open-profile','account:open-store','app:register','update:check','update:mark-seen','announcements:list','announcements:mark-read']) {
+  ipcMain.handle(channel, () => ({ok:false, message:'请使用期音账号管理；密码找回请联系管理员'}));
+}
 
 const UVR_RECOMMENDED_MODELS = [
   {
@@ -3620,9 +2871,7 @@ const UVR_GPU_RUNTIME_DIRNAME = "gpu-v406";
 const UVR_GPU_ARCHIVE_FILENAME = "悸风喵核Studio-NVIDIA-GPU加速组件-V4.0.6-x64.zip";
 const UVR_GPU_ARCHIVE_SHA256 = "A37059BD92F448FF96BB971981CBCFCE32136EC729F8E1153973003BF4ECA9ED";
 const UVR_GPU_ARCHIVE_MIN_BYTES = 3_000_000_000;
-const UVR_GPU_DOWNLOAD_URLS = [
-  `https://gaobaijifeng.cn-nb1.rains3.com/${encodeURIComponent(UVR_GPU_ARCHIVE_FILENAME)}`,
-];
+const UVR_GPU_DOWNLOAD_URLS = [];
 
 function uvrGpuRuntimeDir() {
   return path.join(app.getPath("userData"), "uvr_runtime");
@@ -3645,92 +2894,6 @@ function uvrGpuRuntimePath() {
     } catch (_) {}
   }
   return "";
-}
-
-function isAllowedAccountAvatarUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    const hostname = url.hostname.toLowerCase();
-    return url.protocol === "https:" && ACCOUNT_AVATAR_ALLOWED_DOMAINS.some(
-      (domain) => hostname === domain || hostname.endsWith(`.${domain}`)
-    );
-  } catch (_) {
-    return false;
-  }
-}
-
-function accountAvatarCacheFile(url) {
-  const key = crypto.createHash("sha256").update(String(url), "utf8").digest("hex");
-  return path.join(app.getPath("userData"), "account-avatar-cache", `${key}.json`);
-}
-
-function readAccountAvatarCache(url) {
-  try {
-    const payload = JSON.parse(fs.readFileSync(accountAvatarCacheFile(url), "utf8"));
-    if (payload?.url !== url || !/^image\//i.test(String(payload?.mime || "")) || !payload?.base64) return null;
-    return { mime: String(payload.mime), buffer: Buffer.from(String(payload.base64), "base64") };
-  } catch (_) {
-    return null;
-  }
-}
-
-function fetchAccountAvatar(url, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    if (!isAllowedAccountAvatarUrl(url) || redirects > 3) return reject(new Error("avatar_url_not_allowed"));
-    const request = https.get(url, { headers: { Accept: "image/*", "User-Agent": ACCOUNT_AVATAR_USER_AGENT } }, (response) => {
-      const status = Number(response.statusCode || 0);
-      if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
-        response.resume();
-        const nextUrl = new URL(response.headers.location, url).toString();
-        fetchAccountAvatar(nextUrl, redirects + 1).then(resolve, reject);
-        return;
-      }
-      if (status < 200 || status >= 300) {
-        response.resume();
-        reject(new Error(`avatar_http_${status}`));
-        return;
-      }
-      const mime = String(response.headers["content-type"] || "image/jpeg").split(";")[0].trim().toLowerCase();
-      if (!mime.startsWith("image/")) {
-        response.resume();
-        reject(new Error("avatar_invalid_content_type"));
-        return;
-      }
-      const chunks = [];
-      let size = 0;
-      response.on("data", (chunk) => {
-        size += chunk.length;
-        if (size > 2 * 1024 * 1024) request.destroy(new Error("avatar_too_large"));
-        else chunks.push(chunk);
-      });
-      response.on("end", () => resolve({ mime, buffer: Buffer.concat(chunks) }));
-    });
-    request.setTimeout(5000, () => request.destroy(new Error("avatar_request_timeout")));
-    request.on("error", reject);
-  });
-}
-
-async function resolveAccountAvatarSource(url) {
-  if (!isAllowedAccountAvatarUrl(url)) return { ok: false, message: "头像地址不可用" };
-  const cached = readAccountAvatarCache(url);
-  if (cached?.buffer?.length) {
-    return { ok: true, cached: true, source: `data:${cached.mime};base64,${cached.buffer.toString("base64")}` };
-  }
-  try {
-    const downloaded = await fetchAccountAvatar(url);
-    const cacheFile = accountAvatarCacheFile(url);
-    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-    fs.writeFileSync(cacheFile, JSON.stringify({
-      url,
-      mime: downloaded.mime,
-      base64: downloaded.buffer.toString("base64"),
-      cachedAt: new Date().toISOString(),
-    }), "utf8");
-    return { ok: true, cached: false, source: `data:${downloaded.mime};base64,${downloaded.buffer.toString("base64")}` };
-  } catch (error) {
-    writeLog(`账号头像加载失败: ${error.message || error}`, "warn");
-    return { ok: false, message: "头像暂时无法加载" };
-  }
 }
 
 function localGpuRuntimeArchive() {
@@ -4230,18 +3393,8 @@ ipcMain.handle("separation:download-model", async (_event, payload = {}) => {
   if (separationDownloadJob) return { ok: false, message: "已有模型正在下载" };
   return downloadUvrModel(String(payload.filename || ""));
 });
-ipcMain.handle("account:devices", async () => {
-  const manager = await ensureAccountSessionV2();
-  const result = await manager.listDevices();
-  if (!result.ok) result.message = accountV2ErrorMessage(result.reason_code, result.message);
-  return result;
-});
-ipcMain.handle("account:unbind-device", async (_event, payload) => {
-  const manager = await ensureAccountSessionV2();
-  const result = await manager.unbindDevice(payload?.devicePublicId);
-  if (!result.ok) result.message = accountV2ErrorMessage(result.reason_code, result.message);
-  return result;
-});
+ipcMain.handle('account:devices', () => getCommercialClient().call('/v1/devices'));
+ipcMain.handle('account:unbind-device', (_event, payload) => getCommercialClient().call('/v1/devices/'+encodeURIComponent(String(payload?.devicePublicId)), undefined, 'DELETE'));
 
 ipcMain.handle("separation:devices", async () => separationDeviceStatus());
 
@@ -4838,7 +3991,8 @@ ipcMain.handle("editor:cancel", async () => {
 });
 
 ipcMain.handle("open:url", async (_event, url) => {
-  if (!url) return { ok: false };
+  try { if (!['https:', 'http:'].includes(new URL(url).protocol)) return {ok:false}; }
+  catch { return {ok:false}; }
   await shell.openExternal(url);
   return { ok: true };
 });

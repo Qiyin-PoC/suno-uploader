@@ -1,0 +1,8 @@
+{
+  "dmgBytes": 31116247,
+  "dmgSha256": "60691f1bdc848850741e9df56eb59072d122138582581dfc6571dfb6fe0567a9",
+  "appLogicalBytes": 68540605,
+  "appDiskKiB": 67496,
+  "architecture": "x86_64",
+  "minimumMacOS": "26.0"
+}

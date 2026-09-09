@@ -35,3 +35,21 @@ vendor/uvr/
 # 系统
 .DS_Store
 Thumbs.db
+
+# Local credentials and licensing data
+.venv/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+data/
+*.sqlite3*
+playwright-report/
+test-results/
+
+# Tauri preview build outputs (keep Cargo.lock and source)
+tauri-preview/.build/
+tauri-preview/src-tauri/target/
+tauri-preview/src-tauri/runtime/
+tauri-preview/src-tauri/gen/schemas/

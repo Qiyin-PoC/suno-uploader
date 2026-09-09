@@ -1,93 +1,101 @@
-# Suno 歌曲上传器（期音科技 · 内部使用版）
+# 期音 Suno 上传器 · Windows 开发交接
 
-> ⚠️ **请勿传播 · 仅内部使用**
+桌面音乐工具：批量上传音频到 Suno、批量下载歌曲、歌词文字转换，以及独立的期音账号授权后端。
 
-期音科技内部使用的 Suno 音频工具：浏览器自动登录、音频切片拼接上传、批量排队、歌词处理、
-歌曲下载、上传历史、多账号。**无需官网账号、无需激活码、无软件授权锁。**
+**接手 Windows 开发请先读 [Windows 交接说明](docs/WINDOWS-HANDOFF.md)，再按 [构建与验收](docs/WINDOWS-TEST.md) 操作。**
 
-## 功能
+## 现在做到了什么
 
-### 上传
-- 浏览器自动登录 Suno（CDP，打开浏览器完成登录后自动抓取 token）
-- 多账号：3 个账号槽位独立登录、切换
-- 浏览器拓展登录（Chrome/Edge 插件 + 一次性配对码，解耦 CDP）
-- 音频切片拼接上传（本地低能量切点算法 + ffmpeg，突破 Suno 约 2 分钟限制）
-- 单曲上传 / 批量排队上传（双模式），失败自动跳过继续、断点续传
-- 稳定上传提速（3→4 路并发 + 大切片）
-- 歌词处理：中文同音替换 / 转拼音 / 粤语转粤拼 / 英语发音 / 韩语罗马音 / 泰语罗马音
-- 实时进度、切片统计、ETA 倒计时、运行日志
+当前实际交付客户端是 `tauri-preview/`：Tauri 2 + Rust 窗口与任务管理 + 冻结 Python 引擎 + FFmpeg。`electron/` 是保留的旧客户端，不是这轮 Windows 轻量版的主开发入口。
 
-### 下载
-- Suno 歌曲下载：MP3 / WAV / **原始源 m4a（保留 Opus 编码，音质最好）**
-- 批量下载（每行一个链接，最多 100 首）
+- Mac 安装版已真实验证：期音登录、Suno 登录、两首合成音频连续上传、两首 MP3 连续下载并完整解码。
+- 上传可多选音频，下载每行一个 Suno 歌曲链接，每批最多 100 首，逐首执行；有进度、结果、失败重试、停止和继续未完成项。100 首满量未压测，退出后队列不保留。
+- 歌词工具接受文字；中文拼音不带声调。不包含音频识别歌词。另有同音字替换和有限的外语/方言规则工具。
+- `licensing/` 提供注册、登录、服务端到期/设备限制及每项任务授权；有微信/支付宝支付适配代码，但真实商户、支付回调、定价和生产联调尚未完成。
+- Windows 构建脚本、NSIS 配置和 GitHub Actions 已提供，**还没有 Windows 安装、界面或真实 Suno 上传验收结果**。
 
-### 其它
-- 上传历史：记录 / 搜索 / 过滤 / 统计 / 管理
-- 稳定基建：单例锁、心跳看门狗、日志落盘、优雅停止
+## 尚缺什么
 
-## 目录结构
+1. Windows x64 原生构建、普通用户安装及卸载、WebView2、Chrome/Edge、中文路径、任务退出清理和真实批量任务验收。
+2. 正式 HTTPS 账号服务与客户端联机。当前 Mac/Windows QA 构建绑定本机 `http://127.0.0.1:18870`；公开测试网页的 HTTP 子路径不能直接作为生产客户端账号地址。
+3. 支付商户配置、真实支付和退款/续费运营流程、正式定价；不能把支付模拟测试视作可收款。
+4. 签名、公证、自动更新源、Suno 凭据安全存储、完整发布合规与第三方许可证清单。
+5. 队列持久化、崩溃恢复和异常中断后避免重复上传；目前重试前需要核对远端曲库。
 
-```
-electron/              Electron 外壳（main.js 主进程 + preload.js + renderer/ 界面）
-backend/               Python 后端（切片、歌词、上传、下载、多账号）
-python-embed/          内置 Python 3.12（运行下载/其它脚本）
-vendor/ffmpeg/         内置 ffmpeg（切片/转码用）
-suno-login-extension/  浏览器拓展（扩展登录用）
-assets/                图标与吉祥物
-```
+**这是开发验证版，不是可直接销售的正式版本。** 详细结果以 [测试记录](docs/TEST-REPORT.md) 最新章节为准；历史章节不能作为当前全部功能通过的结论。测试密码、商户密钥、数据库、运行时和安装包不纳入源码提交。
 
-## 环境要求
+## 目录
 
-- Windows 10/11
-- Node.js ≥ 18（仅源码运行/打包时需要；打包产物无需）
+| 路径 | 用途 |
+|---|---|
+| `tauri-preview/` | 轻量桌面端、冻结引擎构建、Mac/Windows 打包 |
+| `backend/` | Suno 上传、下载、歌词、音频处理 |
+| `licensing/` | 账号授权、支付适配、服务器管理命令 |
+| `deploy/` | 账号服务与测试下载站部署参考 |
+| `.github/workflows/` | 跨平台测试与 Windows 安装包构建 |
+| `tests/` | Python/JS 回归测试 |
+| `electron/` | 旧客户端和遗留功能；不要误当作本轮主交付 |
 
-## 运行（源码方式）
+以下命令主要针对旧 Electron 开发入口；Windows 轻量版使用上面的专门交接文档。
 
-```bash
-npm install
-npm start        # 用内置 python-embed 运行，无需另装 Python
-```
+## 本地开发
 
-## 打包成桌面程序
+Node.js >= 22.12，Python >= 3.12，ffmpeg 已安装。开发环境建议使用隔离目录。
 
-```bash
-npm run pack     # 生成 dist/win-unpacked/Suno歌曲上传器.exe（免安装绿色版）
-npm run dist     # 生成安装包
+```sh
+npm ci
+npm run setup:electron
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt -r licensing/requirements.txt pytest
+QIYIN_DATABASE=data/dev.sqlite3 .venv/bin/python -m uvicorn licensing.app:create_app --factory --host 127.0.0.1 --port 18870
 ```
 
-打包产物自带 Python + ffmpeg，可直接拷贝到其它机器运行，无需装任何依赖。
+另一个终端启动桌面端（仅开发版允许本机 HTTP）：
 
-## 使用步骤
-
-### 1. 登录 Suno
-
-- 方式一（CDP）：点「登录 Suno」→ 在弹出的浏览器里登录你的 Suno 账号，登录态自动抓取。
-- 方式二（拓展登录）：点「扩展登录」→ 按提示安装 `suno-login-extension` 插件 → 在浏览器登录 Suno → 粘贴配对码回传。
-
-### 2. 上传
-
-1. 选择音频（单曲或批量拖入）
-2. 选上传模式（稳定上传 / 快速上传）
-3. 点「上传到 Suno」
-
-### 3. 下载
-
-1. 切到「歌曲下载」板块
-2. 粘贴 Suno 歌曲链接（每行一个）
-3. 选格式（MP3 / WAV / 原始源 m4a）
-4. 点「开始下载」
-
-## 数据位置
-
-数据（token / 上传历史 / 切片工作目录 / 日志）保存在：
-
-```
-%APPDATA%\Suno歌曲上传器
+```sh
+QIYIN_LICENSE_URL=http://127.0.0.1:18870 npm start -- --user-data-dir=/tmp/qiyin-dev
 ```
 
-## 说明与合规
+Windows PowerShell 使用 `.venv\Scripts\python.exe` / `.venv\Scripts\pip.exe`；环境变量使用 `$env:QIYIN_LICENSE_URL='http://127.0.0.1:18870'`。开发模式自动查找 `.venv`，也可设置 `QIYIN_PYTHON`。发行版不接受这些环境变量覆盖授权域名或 Python。
 
-- 上传走 Suno 官方接口，用你自己的账号，消耗你自己的积分。
-- 下载走 Suno 公开音频源；**请在你有权使用的范围内使用**。
-- 本工具为内部使用版，请遵守 Suno 服务条款，仅处理你拥有权利或已获授权的音频。
-- **请勿传播 · 仅内部使用**
+先在桌面端注册测试账号，然后给本地账号开通：
+
+```sh
+.venv/bin/python -m licensing.admin --database data/dev.sqlite3 grant test@example.com --days 30 --reason local-development
+```
+
+## 测试
+
+```sh
+npm test
+.venv/bin/python -m pytest -q
+# 另行启动本地服务后，运行真实 HTTP 集成测试：
+QIYIN_TEST_URL=http://127.0.0.1:18870 node --test tests/http-client.integration.test.js
+```
+
+`tests/test_licensing.py` 中的支付为本地生成 RSA 密钥的模拟，不是支付平台沙箱或真实交易。
+
+## 桌面打包
+
+将正式 HTTPS 域名填入 `electron/commercial-config.json` 的 `apiOrigin`。
+准备当前目标平台的可分发 Python（含 backend/requirements.txt 中的库）与 ffmpeg：
+
+```text
+python-embed/win32-x64/python.exe
+python-embed/darwin-arm64/bin/python3
+python-embed/darwin-x64/bin/python3
+python-embed/linux-x64/bin/python3
+vendor/ffmpeg/<平台-架构>/ffmpeg[.exe]
+```
+
+这些运行时必须能在无开发环境的干净机器运行，不能把本机带绝对路径的 `.venv` 直接复制作为发行运行时。
+
+```sh
+npm run check:package -- darwin arm64
+npm run dist -- --mac --arm64
+# 在对应目标系统验证 Windows / Linux 构建
+npm run dist -- --win --x64
+npm run dist -- --linux --x64
+```
+
+构建前置检查会拒绝未配置域名或缺少平台运行时的发布，防止打出打不开或无法鉴权的包。签名证书、公证和自动更新尚未配置。

@@ -30,6 +30,7 @@ import history_store
 import lyrics_local
 from audio_splitter import Segment, source_file_identity, split_audio
 from suno_auth import select_verified_token, token_subject, matching_browser_pids, clear_login_files
+from browser_launch import browser_executable_command
 
 try:
     import requests
@@ -129,14 +130,18 @@ def cdp_base() -> str:
 
 def cdp_get(path: str) -> Any:
     req = require_requests()
-    response = req.get(cdp_base() + path, timeout=3)
+    with req.Session() as local:
+        local.trust_env = False
+        response = local.get(cdp_base() + path, timeout=3)
     response.raise_for_status()
     return response.json() if response.text else None
 
 
 def cdp_put(path: str) -> Any:
     req = require_requests()
-    response = req.put(cdp_base() + path, timeout=5)
+    with req.Session() as local:
+        local.trust_env = False
+        response = local.put(cdp_base() + path, timeout=5)
     response.raise_for_status()
     return response.json() if response.text else None
 
@@ -309,7 +314,7 @@ def launch_browser(url: str, force_new_page: bool = False, bring_front: bool = T
         stop_profile_browser_processes()
         time.sleep(0.35)
         cmd = [
-            str(browser),
+            *browser_executable_command(browser),
             f"--remote-debugging-port={CDP_PORT}",
             "--remote-allow-origins=*",
             f"--user-data-dir={BROWSER_PROFILE}",
@@ -390,7 +395,7 @@ def cdp_call_on_ws(ws_url: str, method: str, params: Optional[Dict[str, Any]] = 
     except Exception as exc:
         raise RuntimeError("缺少 Python 依赖 websocket-client，请先安装 python/requirements.txt") from exc
 
-    ws = websocket.create_connection(ws_url, timeout=max(10, min(timeout, 60)))
+    ws = websocket.create_connection(ws_url, timeout=max(10, min(timeout, 60)), http_no_proxy=["127.0.0.1", "localhost"])
     try:
         try:
             ws.settimeout(max(10, min(timeout, 60)))

@@ -1,0 +1,18 @@
+#commercialDialog { width:min(520px, calc(100vw - 32px)); max-height:90vh; overflow:auto; padding:28px; border:1px solid #d9e5f5; border-radius:22px; background:#f8fbff; color:#172b49; box-shadow:0 24px 100px #102c5c40; }
+#commercialDialog::backdrop { background:#162b4966; backdrop-filter:blur(5px); }
+#commercialDialog header {display:flex; justify-content:space-between; align-items:center; gap:20px;}
+#commercialDialog h2 {margin:4px 0 12px; font-size:24px;}
+#commercialDialog h3 {margin:24px 0 8px;}
+#commercialDialog .commercial-kicker {letter-spacing:.16em; color:#55769b; font-size:11px; margin:0;}
+#commercialDialog p {line-height:1.6; overflow-wrap:anywhere;}
+#commercialDialog label {display:block; font-size:13px; margin:16px 0;}
+#commercialDialog input {display:block; box-sizing:border-box; width:100%; padding:12px; margin-top:7px; color:#172b49; border:1px solid #cddaea; border-radius:10px; background:#fff;}
+#commercialDialog button {padding:10px 14px; border:1px solid #c7d9ee; border-radius:10px; cursor:pointer; color:#174c87; background:white;}
+#commercialDialog button:disabled {opacity:.5; cursor:wait;}
+#commercialDialog button.primary-btn {background:#2677c9; color:#fff;}
+#commercialDialog .commercial-actions {display:flex; flex-wrap:wrap; gap:8px; margin:14px 0;}
+#commercialDialog small {display:block; line-height:1.6; color:#617792;}
+#commercialDialog [hidden] {display:none!important;}
+#commercialPayment {text-align:center; padding:14px; background:white; border-radius:14px; margin-top:16px;}
+#commercialMessage {min-height:24px; color:#315d91; font-size:13px;}
+#commercialOpen {margin:10px 12px;}
