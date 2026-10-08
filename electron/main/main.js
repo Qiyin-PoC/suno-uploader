@@ -35,7 +35,9 @@ const ACCOUNT_AVATAR_USER_AGENT = `JifengMeowCoreStudio/${APP_VERSION_LABEL.repl
 const ACCOUNT_AVATAR_ALLOWED_DOMAINS = ["gaobaijifeng.top", "gblicensehub.xyz"];
 
 app.setName(APP_DISPLAY_NAME);
-app.setPath("userData", path.join(app.getPath("appData"), LEGACY_USER_DATA_NAME));
+if (!process.argv.some(argument => argument === "--user-data-dir" || argument.startsWith("--user-data-dir="))) {
+  app.setPath("userData", path.join(app.getPath("appData"), LEGACY_USER_DATA_NAME));
+}
 
 // ===== Win10/Win11 兼容性：必须设置 AppUserModelId =====
 // 未设置会导致 Win11 24H2+/Build 26200 上系统托盘图标不显示

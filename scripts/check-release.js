@@ -32,7 +32,7 @@ for (const [relative, expected] of Object.entries(sourceBaseline)) {
 }
 
 const internalRuntimeBaseline = {
-  "electron/main/main.js": "57d02aca6010f58e77f915f3114c5e83cc0cd0aa43adf44c5b80d4dc0f35f9cc",
+  "electron/main/main.js": "bd3d974a56f613ce2a114b1ae18192ea8fae0b31b3ec0c7b46c6fdc716c449ce",
   "electron/main/suno-download.js": "56b7cc3e7c2124cf96846e9d6643d7b0d5e090686c2b266cfee9bca196da0d05",
   "electron/main/suno-download-batch.js": "9b0c79144af5519e631f93d53ea0144c78f3e1550a62569cce9cb7129f07a9c6",
   "electron/main/backend-process.js": "b611deb0265ab1c8ec51c9d73c691926a4bcdab841024048d62b9acc2a8b2e18",
