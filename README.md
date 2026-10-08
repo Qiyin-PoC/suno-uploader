@@ -111,3 +111,7 @@ ZIP 是正式免安装交付：完整解压后运行 `Suno歌曲上传器.exe`�
 - 请遵守 Suno 服务条款和相关版权规定。
 - 只处理本人拥有权利或已经获得授权的音频。
 - 商业授权声明以应用内及 5.0.4 随附说明为准。
+
+## Mac 免期音账号体验版
+
+本仓库另提供 `codex/mac-account-free-master` 分支，用于构建无需期音账号的 Mac 体验版。进入源码根目录执行 `python3 tauri-preview/package_experience_macos.py`。体验版不连接期音账号授权服务，上传到 Suno 仍需要使用者自己的 Suno 登录。构建要求 macOS 26+；完整限制与验收记录见 [docs/ACCOUNT-FREE-EXPERIENCE.md](docs/ACCOUNT-FREE-EXPERIENCE.md)。
