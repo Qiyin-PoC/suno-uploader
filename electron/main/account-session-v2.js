@@ -189,7 +189,11 @@ class AccountSessionV2 {
   }
 
   readEncrypted(filePath) {
-    if (!this.safeStorage.isEncryptionAvailable() || !fs.existsSync(filePath)) return "";
+    // 先判断文件是否存在，再去问钥匙串：没有凭据时不应该触发授权弹窗。
+    // macOS 上 isEncryptionAvailable() 会真的访问钥匙串，而 ad-hoc 签名的
+    // cdhash 每次构建都不同，系统会反复弹「允许／始终允许」的授权框。
+    if (!fs.existsSync(filePath)) return "";
+    if (!this.safeStorage.isEncryptionAvailable()) return "";
     return this.safeStorage.decryptString(fs.readFileSync(filePath));
   }
 

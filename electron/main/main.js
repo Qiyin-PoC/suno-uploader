@@ -1,6 +1,7 @@
-const { app, BrowserWindow, dialog, ipcMain: rawIpcMain, Menu, shell, Tray, nativeImage, session, safeStorage, net, powerMonitor } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain: rawIpcMain, Menu, shell, Tray, nativeImage, screen, session, safeStorage, net, powerMonitor } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const { spawn } = require("child_process");
 const { pathToFileURL } = require("url");
 const crypto = require("crypto");
@@ -16,8 +17,10 @@ const { TaskAuthorizationBroker } = require("./task-authorization-broker");
 const { text: COMMERCIAL_USE_NOTICE } = require("./legal-notice");
 const { createTrustedIpcMain, hardenMainWindow, safeExternalUrl } = require("./renderer-security");
 const { ACTIVE_QUEUE_STATUSES, PersistentUploadBatchQueue, VALID_SPEEDS } = require("./upload-batch-queue");
+const { spawnBackendProcess } = require("./backend-process");
 
-const APP_DISPLAY_NAME = "悸风喵核 Studio";
+const APP_DISPLAY_NAME = "期音科技";
+const LEGACY_USER_DATA_NAME = "悸风喵核 Studio"; // 保留已有账号、历史和下载设置的存储位置。
 const APP_VERSION_LABEL = "V5.0.4";
 const LICENSE_REQUIRED_MESSAGE = "该功能需要购买并激活授权码后使用";
 const LICENSE_SPOT_CHECK_RATE = 0.25;
@@ -32,6 +35,9 @@ const ACCOUNT_AVATAR_USER_AGENT = `JifengMeowCoreStudio/${APP_VERSION_LABEL.repl
 const ACCOUNT_AVATAR_ALLOWED_DOMAINS = ["gaobaijifeng.top", "gblicensehub.xyz"];
 
 app.setName(APP_DISPLAY_NAME);
+if (!process.argv.some(argument => argument === "--user-data-dir" || argument.startsWith("--user-data-dir="))) {
+  app.setPath("userData", path.join(app.getPath("appData"), LEGACY_USER_DATA_NAME));
+}
 
 // ===== Win10/Win11 兼容性：必须设置 AppUserModelId =====
 // 未设置会导致 Win11 24H2+/Build 26200 上系统托盘图标不显示
@@ -143,7 +149,12 @@ const accountEmailCodeCooldowns = new Map();
 // 默认改为 "exit"：Win11 24H2+ 托盘图标经常不可见（即使 new Tray() 不抛错），
 // 默认 minimize 会让用户"按了关闭按钮就再也找不到窗口"。
 // 想用托盘的用户可以从右上角"设置"按钮主动切到 "ask" 或 "minimize"。
-let closeBehavior = "exit"; // ask | minimize | exit
+// 关闭行为的默认值按平台区分：
+// Windows 默认直接退出——Win11 24H2+ 托盘图标经常不可见，
+//   默认 minimize 会让用户"按了关闭按钮就再也找不到窗口"。
+// macOS 遵循平台惯例：红灯只关闭窗口、应用留在 Dock 并继续运行，
+//   真正退出用 ⌘Q 或菜单「退出」。
+let closeBehavior = process.platform === "darwin" ? "minimize" : "exit"; // ask | minimize | exit
 let lastCloseChoice = null; // minimize | exit
 
 // 鎸佷箙鍖栫洰褰曢€夋嫨鍋忓ソ
@@ -202,17 +213,29 @@ function loadClosePrefs() {
     writeLog(`loadClosePrefs: raw=${JSON.stringify(raw)}`);
     const prefs = JSON.parse(raw);
     writeLog(`loadClosePrefs: parsed=${JSON.stringify(prefs)} trayUsable=${trayUsable}`);
-    // Win11 24H2+ 上即使 new Tray() 成功，托盘图标也可能不可见。
-    // 之前的版本默认 ask + 上次选 minimize 会让用户"按关闭就再也找不到窗口"。
-    // 这里强制把 minimize 重置成 exit，保证用户点关闭按钮一定退出。
-    if (prefs.lastChoice === "minimize" || prefs.behavior === "minimize") {
+    // 旧版本在 macOS 上同样执行了下面那段 Windows 专属重置：把 minimize 强制改回
+    // exit 并落盘。因此历史文件里的 exit 往往不是用户的选择，而是程序写的。
+    // 做一次性迁移：只在第一次把 exit 当作默认值纠正为 minimize，之后完全尊重用户设置。
+    if (process.platform === "darwin" && !prefs.macMinimizeMigration) {
+      prefs.macMinimizeMigration = true;
+      if (prefs.behavior === "exit") {
+        writeLog("macOS 一次性迁移：历史 exit 偏好按平台惯例改为 minimize");
+        prefs.behavior = "minimize";
+        if (prefs.lastChoice === "exit") prefs.lastChoice = "minimize";
+      }
+      try { fs.writeFileSync(closePrefsFile, JSON.stringify(prefs, null, 2), "utf8"); } catch (e) { writeLog(`迁移保存失败: ${e.message}`, "error"); }
+    }
+    // 下面两条兜底都是 Windows 专属。
+    // Win11 24H2+ 上即使 new Tray() 成功，托盘图标也可能不可见，
+    // 而 Windows 下托盘是关窗后唯一的恢复入口，所以强制走退出。
+    // macOS 关窗后可从 Dock 唤起，隐藏窗口正是平台惯例，不能在这里被重置掉。
+    if (process.platform === "win32" && (prefs.lastChoice === "minimize" || prefs.behavior === "minimize")) {
       writeLog("Win11 24H2+ 托盘不可靠，重置 minimize → exit");
       prefs.lastChoice = "exit";
       prefs.behavior = "exit";
       try { fs.writeFileSync(closePrefsFile, JSON.stringify(prefs, null, 2), "utf8"); } catch (e) { writeLog(`重置保存失败: ${e.message}`, "error"); }
     }
-    // 托盘构造失败的兜底
-    if (!trayUsable) {
+    if (process.platform === "win32" && !trayUsable) {
       writeLog("托盘构造失败，重置为 exit");
       prefs.behavior = "exit";
       prefs.lastChoice = "exit";
@@ -230,10 +253,13 @@ function loadClosePrefs() {
 }
 function saveClosePrefs() {
   try {
-    fs.writeFileSync(closePrefsFile, JSON.stringify({
+    const payload = {
       behavior: closeBehavior,
       lastChoice: lastCloseChoice,
-    }), "utf8");
+    };
+    // 必须保留迁移标记，否则下次启动会再迁移一次，把用户主动选择的「直接退出」改回隐藏。
+    if (process.platform === "darwin") payload.macMinimizeMigration = true;
+    fs.writeFileSync(closePrefsFile, JSON.stringify(payload), "utf8");
   } catch (_) {}
 }
 
@@ -244,7 +270,9 @@ async function handleCloseRequest(event) {
 
   // Win11 24H2+ 托盘图标经常不可见（即使 new Tray() 成功也不显示）。
   // 一旦走 minimize，用户就再也找不到窗口。所以 Win11 + 默认 minimize 直接走 exit。
-  if (!trayUsable || (process.platform === "win32" && closeBehavior === "minimize" && !isTrayReallyVisible())) {
+  // 托盘不可用时的强制退出只针对 Windows：那里托盘是关窗后唯一的恢复入口。
+  // macOS 可以从 Dock 重新唤起窗口，因此即使托盘没建起来也不强制退出。
+  if (process.platform === "win32" && (!trayUsable || (closeBehavior === "minimize" && !isTrayReallyVisible()))) {
     writeLog("托盘不可靠或 Win11 上 minimize 强制走 exit");
     lastCloseChoice = "exit";
     saveClosePrefs();
@@ -359,11 +387,15 @@ function ensureTray() {
         }
       }
     }
-    // Windows 托盘推荐 16x16 或 32x32；logo.png 是 2184x2248 太大，
-    // 缩放成 32x32 让 Windows 渲染时清晰
-    if (process.platform === "win32" && !image.isEmpty()) {
-      const small = image.resize({ width: 32, height: 32, quality: "best" });
-      if (!small.isEmpty()) image = small;
+    // logo.png 是 2184x2248，直接交给托盘会让系统自行大幅缩放。
+    // Windows 托盘推荐 32x32；macOS 菜单栏按 22pt 渲染，同样需要预缩放，
+    // 否则图标会占据过多菜单栏空间。
+    if (!image.isEmpty()) {
+      const target = process.platform === "darwin" ? 22 : process.platform === "win32" ? 32 : 0;
+      if (target) {
+        const small = image.resize({ width: target, height: target, quality: "best" });
+        if (!small.isEmpty()) image = small;
+      }
     }
     appTray = new Tray(image);
     const contextMenu = Menu.buildFromTemplate([
@@ -374,7 +406,7 @@ function ensureTray() {
       { type: "separator" },
       { label: "彻底退出", click: () => quitApp() }
     ]);
-    appTray.setToolTip(`${APP_DISPLAY_NAME} · 悸风喵核 Studio`);
+    appTray.setToolTip(`${APP_DISPLAY_NAME} · Suno 歌曲上传器`);
     appTray.setContextMenu(contextMenu);
     appTray.on("double-click", () => showMainWindowFromTray());
     appTray.on("click", () => showMainWindowFromTray());
@@ -462,31 +494,48 @@ function vendorExecutable(toolName, baseName, options = {}) {
   return null;
 }
 
-function backendExecutable() {
-  const root = projectRoot();
-  if (app.isPackaged) {
-    const exe = process.platform === "win32" ? "backend.exe" : "backend";
-    const candidate = path.join(root, "backend", exe);
-    return { command: require("./worker-integrity").verifyWorker(candidate), prefixArgs: [] };
-  }
+// 被冻进 qiyin-engine 的脚本，以及对应的引擎模式参数。
+// 这是白名单而非默认值：audio_editor / uvr_worker / 各类解锁器脚本并未冻结，
+// 若被默认映射成 backend，它们的参数会被 backend 的 argparse 误判，
+// 用户看到的就是英文 usage 而不是「该功能在当前平台不可用」。
+const ENGINE_MODES = { backend: "backend", suno_download_cli: "download" };
 
-  const envPython = process.env.GAOBAI_PYTHON;
-  const command = envPython || (process.platform === "win32" ? "python" : "python3");
-  return {
-    command,
-    prefixArgs: [path.join(root, "python", "backend.py")]
-  };
+function bundledPythonExecutable(scriptName) {
+  const root = projectRoot();
+  const bundled = process.platform === "win32" ? path.join(root, "python-embed", "python.exe") : "python3";
+  const command = process.env.GAOBAI_PYTHON || bundled;
+  let script = path.join(root, "backend", `${scriptName}.py`);
+  if (process.env.GAOBAI_E2E_MODE === "1") {
+    const key = scriptName === "backend" ? "GAOBAI_E2E_BACKEND_SCRIPT"
+      : scriptName === "suno_download_cli" ? "GAOBAI_E2E_DOWNLOAD_SCRIPT" : "";
+    const candidate = key ? path.resolve(process.env[key] || "") : "";
+    const temporaryRoot = path.resolve(os.tmpdir()) + path.sep;
+    if (candidate.startsWith(temporaryRoot) && candidate.endsWith(".py") && fs.existsSync(candidate)) script = candidate;
+    // E2E 必须走注入脚本，不能被内置引擎短路，否则针对打包产物的测试会假通过。
+    return { command, prefixArgs: [script] };
+  }
+  const engine = path.join(root, "engine", executableName("qiyin-engine"));
+  const engineMode = ENGINE_MODES[scriptName];
+  if (app.isPackaged && process.platform !== "win32") {
+    // 非 Windows 打包态不存在可用的 python3 + backend/*.py 回退路径，
+    // 因此始终指向内置引擎：万一安装包不完整，报错会落在明确路径上，
+    // 而不是回退去调用目标机器上可能存在的另一个 Python 解释器。
+    return engineMode
+      ? { command: engine, prefixArgs: [engineMode] }
+      : { command: engine, prefixArgs: ["unsupported", scriptName] };
+  }
+  if (engineMode && fs.existsSync(engine)) {
+    return { command: engine, prefixArgs: [engineMode] };
+  }
+  return { command, prefixArgs: [script] };
+}
+
+function backendExecutable() {
+  return bundledPythonExecutable("backend");
 }
 
 function pythonScriptExecutable(scriptName) {
-  const root = projectRoot();
-  if (app.isPackaged) {
-    const exe = process.platform === "win32" ? `${scriptName}.exe` : scriptName;
-    return { command: require("./worker-integrity").verifyWorker(path.join(root, "backend", exe)), prefixArgs: [] };
-  }
-  const envPython = process.env.GAOBAI_PYTHON;
-  const command = envPython || (process.platform === "win32" ? "python" : "python3");
-  return { command, prefixArgs: [path.join(root, "python", `${scriptName}.py`)] };
+  return bundledPythonExecutable(scriptName);
 }
 
 function backendEnv(extra = {}) {
@@ -756,14 +805,43 @@ function transcodeUnlockedAudio(srcPath, sourceFile, outputDir, targetFormat, qu
   });
 }
 
+/**
+ * macOS 上改用系统交通灯，因此要隐藏界面里自绘的窗口按钮，
+ * 并给左上角交通灯让出空间，否则交通灯会压在品牌区上。
+ *
+ * 用 insertCSS 注入而不是改 styles.css：渲染层 UI 被 check-release.js
+ * 冻结为「迁移前期音 UI」基线，平台差异统一放在主进程处理。
+ */
+function installMacWindowChrome(win) {
+  const css = [
+    ".window-control-group { display: none !important; }",
+    ".titlebar { padding-left: 80px !important; }",
+  ].join("\n");
+  win.webContents.on("dom-ready", () => {
+    win.webContents.insertCSS(css).catch(() => {});
+  });
+}
+
 function createWindow() {
+  // 原窗口尺寸按 Windows 大屏写死（1550x818）。在 1280 宽的 Mac 上，
+  // 窗口右侧会落到屏幕外，导致靠右的内容与控件不可见。
+  // 这里按当前显示器可用区域收敛一次；屏幕足够大时保持原尺寸不变。
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(1550, Math.max(1020, workArea.width - 40));
+  const height = Math.min(818, Math.max(680, workArea.height - 40));
   mainWindow = new BrowserWindow({
-    width: 1550,
-    height: 818,
-    minWidth: 1020,
-    minHeight: 680,
+    width,
+    height,
+    minWidth: Math.min(1020, width),
+    minHeight: Math.min(680, height),
     resizable: true,
-    frame: false,
+    // macOS 必须使用系统交通灯：frame:false 会把关闭/最小化/最大化一并移除，
+    // 而界面上自绘的 .window-button 三个按钮从来没有样式定义（源码遗留），
+    // 结果是左上角什么都没有、窗口无法关闭或缩放。
+    // hiddenInset 只隐藏标题栏，交通灯保留在左上角。
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" }
+      : { frame: false }),
     backgroundColor: "#f7fbff",
     title: APP_DISPLAY_NAME,
     icon: path.join(projectRoot(), "assets", "logo.png"),
@@ -776,6 +854,7 @@ function createWindow() {
     }
   });
 
+  if (process.platform === "darwin") installMacWindowChrome(mainWindow);
   hardenMainWindow(mainWindow, rendererFile);
   mainWindow.loadFile(rendererFile);
   mainWindow.on("close", (event) => {
@@ -862,7 +941,13 @@ function accountAuthFile() {
 
 function loadAccountToken() {
   try {
-    if (!safeStorage.isEncryptionAvailable() || !fs.existsSync(accountAuthFile())) return "";
+    // 必须先判断文件是否存在，再看加密是否可用。
+    // safeStorage.isEncryptionAvailable() 在 macOS 上会真的去访问钥匙串，
+    // 而 ad-hoc 签名的 app 每次重新构建 cdhash 都会变、安装路径也可能不同，
+    // 钥匙串 ACL 匹配不上就会反复弹「允许／始终允许」授权框。
+    // 没有凭据文件时根本不需要问钥匙串。
+    if (!fs.existsSync(accountAuthFile())) return "";
+    if (!safeStorage.isEncryptionAvailable()) return "";
     const raw = safeStorage.decryptString(fs.readFileSync(accountAuthFile())).trim();
     if (raw.startsWith("{")) {
       const stored = JSON.parse(raw);
@@ -972,7 +1057,7 @@ function normalizeAccountProfile(payload) {
     if (leftPermanent !== rightPermanent) return leftPermanent ? -1 : 1;
     return String(right.expires_at || "").localeCompare(String(left.expires_at || ""));
   })[0] || null;
-  const displayName = String(user.nickname || user.display_name || user.name || user.email || "告白悸风用户").trim();
+  const displayName = String(user.nickname || user.display_name || user.name || user.email || "期音科技用户").trim();
   const avatarUrl = accountAvatarUrl(user);
   const permanent = Boolean(entitlement && (entitlement.is_permanent || entitlement.is_lifetime));
   const expiresAt = entitlement && !permanent ? (entitlement.expires_at || null) : null;
@@ -993,7 +1078,7 @@ function normalizeAccountProfile(payload) {
     entitlement: entitlement ? {
       id: entitlement.id || "",
       source: entitlement.source || "account",
-      product_name: entitlement.product?.name || entitlement.plan?.name || "悸风喵核 Studio",
+      product_name: entitlement.product?.name || entitlement.plan?.name || APP_DISPLAY_NAME,
     } : null,
     is_permanent: permanent,
     expires_at: expiresAt,
@@ -1027,7 +1112,7 @@ function normalizeV2AccountProfile(state, accountPayload = null) {
   const remoteUser = remoteProfile.user || {};
   const user = {
     id: remoteUser.id || sessionUser.id || sessionUser.uid || "",
-    name: remoteUser.name || sessionUser.nickname || sessionUser.display_name || sessionUser.name || sessionUser.email || "告白悸风用户",
+    name: remoteUser.name || sessionUser.nickname || sessionUser.display_name || sessionUser.name || sessionUser.email || "期音科技用户",
     email: remoteUser.email || sessionUser.email || "",
     avatar_url: remoteUser.avatar_url || accountAvatarUrl(sessionUser) || "",
   };
@@ -1271,14 +1356,15 @@ function sanitizeBackendEvent(event) {
 }
 
 function runBackend(args, options = {}) {
-  if (args.includes("--source") && !options.taskAuthorization) throw new Error("上传任务缺少独立授权，请重新开始任务。");
   const spec = backendExecutable();
   let child;
   try {
-    child = spawn(spec.command, [...spec.prefixArgs, ...args], {
+    child = spawnBackendProcess({
+      command: spec.command,
+      args: [...spec.prefixArgs, ...args],
       cwd: projectRoot(),
       env: backendEnv({ ...(options.env || {}), ...(options.taskAuthorization?.env || {}) }),
-      windowsHide: true
+      spawnImpl: options.spawnImpl
     });
   } catch (error) { void options.taskAuthorization?.close(); throw error; }
   const releaseTaskAuthorization = () => { void options.taskAuthorization?.close(); };
@@ -1703,19 +1789,41 @@ function showAboutDialog() {
     type: "info",
     title: "关于",
     message: APP_DISPLAY_NAME,
-    detail: `版本 ${APP_VERSION_LABEL}\n发布日期：2026-09-12\nJifeng MeowCore Studio\n\n支持音频剪辑、升降调、变速不变调、伴奏/人声分离、开放音频格式转换、Suno 上传与歌曲下载。\n\n${COMMERCIAL_USE_NOTICE}`
+    detail: `Suno 歌曲上传、上传历史与歌曲下载。\n\n${COMMERCIAL_USE_NOTICE}`
   });
   return { ok: true };
 }
 
 function buildChineseMenu() {
+  const isMac = process.platform === "darwin";
   const template = [
-    {
-      label: "文件",
+    // macOS 菜单栏第一项必须是应用菜单：显示应用名，并承载关于/服务/隐藏/退出。
+    // Windows 没有这个概念，关于与退出继续放在「文件」菜单里。
+    ...(isMac ? [{
+      label: APP_DISPLAY_NAME,
       submenu: [
         { label: `关于 ${APP_DISPLAY_NAME}`, click: showAboutDialog },
         { type: "separator" },
-        { label: "退出", accelerator: "CmdOrCtrl+Q", click: () => { isQuitting = true; app.quit(); } }
+        { role: "services", label: "服务" },
+        { type: "separator" },
+        { role: "hide", label: `隐藏 ${APP_DISPLAY_NAME}` },
+        { role: "hideOthers", label: "隐藏其他" },
+        { role: "unhide", label: "全部显示" },
+        { type: "separator" },
+        { label: `退出 ${APP_DISPLAY_NAME}`, accelerator: "Command+Q", click: () => { isQuitting = true; app.quit(); } }
+      ]
+    }] : []),
+    {
+      label: "文件",
+      submenu: [
+        // ⌘W / Ctrl+W 关闭窗口。macOS 上它只关闭窗口、应用继续运行（平台惯例）。
+        { label: "关闭窗口", accelerator: "CmdOrCtrl+W", role: "close" },
+        ...(isMac ? [] : [
+          { type: "separator" },
+          { label: `关于 ${APP_DISPLAY_NAME}`, click: showAboutDialog },
+          { type: "separator" },
+          { label: "退出", accelerator: "CmdOrCtrl+Q", click: () => { isQuitting = true; app.quit(); } }
+        ])
       ]
     },
     {
@@ -1735,15 +1843,25 @@ function buildChineseMenu() {
       submenu: [
         { label: "重新加载", accelerator: "CmdOrCtrl+R", role: "reload" },
         { label: "强制重新加载", accelerator: "Shift+CmdOrCtrl+R", role: "forceReload" },
-        { label: "开发者工具", accelerator: "F12", role: "toggleDevTools" },
+        // macOS 使用系统标准组合键；Windows 保留 F12 / F11
+        { label: "开发者工具", accelerator: isMac ? "Alt+Command+I" : "F12", role: "toggleDevTools" },
         { type: "separator" },
         { label: "放大", accelerator: "CmdOrCtrl+=", role: "zoomIn" },
         { label: "缩小", accelerator: "CmdOrCtrl+-", role: "zoomOut" },
         { label: "重置缩放", accelerator: "CmdOrCtrl+0", role: "resetZoom" },
         { type: "separator" },
-        { label: "全屏", accelerator: "F11", role: "togglefullscreen" }
+        { label: "全屏", accelerator: isMac ? "Control+Command+F" : "F11", role: "togglefullscreen" }
       ]
     },
+    ...(isMac ? [{
+      label: "窗口",
+      submenu: [
+        { label: "最小化", accelerator: "Command+M", role: "minimize" },
+        { label: "缩放", role: "zoom" },
+        { type: "separator" },
+        { label: "前置全部窗口", role: "front" }
+      ]
+    }] : []),
     {
       label: "帮助",
       submenu: [
@@ -1792,6 +1910,15 @@ app.whenReady().then(() => {
   });
 
   app.on("acti" + "vate", () => {
+    // 点 Dock 图标时：窗口被隐藏（如关闭方式设为「最小化到托盘」）要先恢复显示，
+    // 只有确实没有窗口时才重建。此前只判断窗口数量，隐藏的窗口无法用 Dock 找回。
+    // 这里与上面的 second-instance 处理保持一致。
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.isVisible()) mainWindow.show();
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      return;
+    }
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
@@ -1844,7 +1971,10 @@ setTimeout(async () => {
 });
 
 app.on("window-all-closed", () => {
-  writeLog("所有窗口已关闭，应用退出");
+  // macOS 惯例：关闭所有窗口不退出应用，可从 Dock 再次唤起，⌘Q 才退出。
+  writeLog(process.platform === "darwin"
+    ? "所有窗口已关闭，应用保持运行（macOS 惯例，⌘Q 退出）"
+    : "所有窗口已关闭，应用退出");
   if (process.platform !== "darwin") app.quit();
 });
 
@@ -1863,8 +1993,7 @@ installSunoDownload({
   executable: () => pythonScriptExecutable("suno_download_cli"),
   ffmpeg: ffmpegExecutable,
   env: backendEnv,
-  authorize: () => requireActiveLicense("suno_download", "歌曲下载"),
-  createTaskAuthorization: () => createTaskAuthorization("suno_download"),
+  authorize: async () => ({ ok: true }),
 });
 
 ipcMain.handle("audio:pick", async () => {
@@ -2050,9 +2179,18 @@ ipcMain.handle("app:showAbout", async () => {
 
 ipcMain.handle("app:showSettings", async () => {
   if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
-  const buttons = ["每次询问", "最小化到托盘", "直接退出"];
+  // macOS 没有"右下角托盘"这个概念：最小化在 Mac 上表现为隐藏窗口，
+  // 恢复入口是 Dock 图标，退出用 ⌘Q。文案需要跟着平台变。
+  const isMac = process.platform === "darwin";
+  const minimizeLabel = isMac ? "隐藏窗口" : "最小化到托盘";
+  const buttons = ["每次询问", minimizeLabel, "直接退出"];
   const labels = ["ask", "minimize", "exit"];
   const currentIdx = labels.indexOf(closeBehavior);
+  const currentLabel = closeBehavior === "ask" ? "每次询问"
+    : closeBehavior === "minimize" ? minimizeLabel : "直接退出";
+  const detail = isMac
+    ? `当前：${currentLabel}\n\n点击「每次询问」会在每次关闭时弹窗。\n点击「隐藏窗口」只关闭窗口，应用继续在 Dock 中后台运行，点 Dock 图标即可恢复（退出请用 ⌘Q）。\n点击「直接退出」会彻底退出软件。`
+    : `当前：${currentLabel}\n\n点击「每次询问」会在每次关闭时弹窗。\n点击「最小化到托盘」会隐藏到右下角托盘图标，点击托盘恢复。\n点击「直接退出」会彻底退出软件。`;
   const result = await dialog.showMessageBox(mainWindow, {
     type: "question",
     buttons,
@@ -2060,7 +2198,7 @@ ipcMain.handle("app:showSettings", async () => {
     cancelId: 2,
     title: "软件设置",
     message: "关闭按钮行为",
-    detail: `当前：${closeBehavior === "ask" ? "每次询问" : closeBehavior === "minimize" ? "最小化到托盘" : "直接退出"}\n\n点击「每次询问」会在每次关闭时弹窗。\n点击「最小化到托盘」会隐藏到右下角托盘图标，点击托盘恢复。\n点击「直接退出」会彻底退出软件。`,
+    detail,
     noLink: true
   });
   if (result.response >= 0 && result.response < labels.length) {
@@ -3258,10 +3396,7 @@ async function launchUploadTaskImpl(payload = {}, options = {}) {
   preparation.check();
   const accountId=getSunoAccounts().id(payload.accountId || getSunoAccounts().selectedId);
   await preparation.wait(getSunoAccounts().stopPairing());
-  if (!options.licenseChecked) {
-    const license = await preparation.wait(requireActiveLicense("suno_upload", "上传 Suno", { forceOnline: true }));
-    if (!license.ok) return license;
-  }
+  // 期音内部版：上传不依赖官网账号或软件权益，只校验所选 Suno 账号凭据。
   preparation.check();
   if (currentJob) return { ok: false, message: "已有任务正在运行" };
   if (!payload.audioPath || !fs.existsSync(payload.audioPath) || !isOpenAudioFile(payload.audioPath)) {
@@ -3327,17 +3462,10 @@ async function launchUploadTaskImpl(payload = {}, options = {}) {
   }
 
   let job = null;
-  let taskAuthorization;
-  try {
-    taskAuthorization = await preparation.wait(createTaskAuthorization("suno_upload"), value=>value?.close());
-    preparation.check();
-  }
-  catch (error) { void taskAuthorization?.close(); return { ok: false, code: error.code || "task_authorization_failed", message: error.message || "任务授权暂时不可用，请稍后重试。" }; }
   try { job = runBackend(args, {
     eventChannel: "backend:event",
     startupTimeoutMs: Math.min(90000,preparation.remainingMs()),
     env: uploadEnv,
-    taskAuthorization,
     onEvent: (event) => {
       if (!batchItemId || !event || typeof event !== "object") return;
       event.batchMode = true;
@@ -3345,7 +3473,6 @@ async function launchUploadTaskImpl(payload = {}, options = {}) {
       updateUploadBatchFromBackend(event, batchItemId);
     },
   }); } catch (error) {
-    void taskAuthorization.close();
     return { ok: false, code: "task_start_failed", message: "上传组件无法启动，请重新安装最新版软件。" };
   }
   job._batchItemId = batchItemId;
@@ -3530,9 +3657,8 @@ async function prepareUploadBatchStart(message, action) {
   const preparation=createUploadPreparation();
   sunoOperation=true;activeUploadPreparation=preparation;
   try {
-    const license=await preparation.wait(requireActiveLicense('suno_upload',message,{forceOnline:true}));
+    // 期音内部版：批量上传同样不依赖官网账号权益。
     preparation.check();
-    if(!license.ok)return license;
     return await action(preparation);
   } catch(error) {return {ok:false,code:error.code || 'task_start_failed',message:error.message || '队列准备失败，请重试。'};}
   finally {
@@ -3673,8 +3799,6 @@ ipcMain.handle("history:list", async () => runBackendJson(["--history"]));
 ipcMain.handle("history:clear", async () => runBackendJson(["--clear-history"]));
 
 ipcMain.handle("lyrics:process", async (_event, payload) => {
-  const license = await requireActiveLicense("lyrics_process", "歌词处理");
-  if (!license.ok) return license;
   return runBackendJson(["--lyrics-mode", payload.mode, "--lyrics", payload.text || ""]);
 });
 
@@ -3745,11 +3869,11 @@ ipcMain.handle("account:logout", async () => {
   }
 });
 ipcMain.handle("account:open-profile", async () => {
-  await openAccountPortal("/account", "告白悸风个人中心");
+  await openAccountPortal("/account", "个人中心");
   return { ok: true };
 });
 ipcMain.handle("account:open-store", async () => {
-  await openAccountPortal("/store", "告白悸风软件商城");
+  await openAccountPortal("/store", "软件商城");
   return { ok: true };
 });
 ipcMain.handle("app:register", async () => runBackendJson(["--app-register"]));

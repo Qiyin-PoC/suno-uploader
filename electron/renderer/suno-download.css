@@ -4,10 +4,10 @@
 .download-note { margin: 0; color: var(--muted); line-height: 1.75; font-size: 12px; }
 .download-formats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; border: 0; padding: 0; margin: 4px 0; }
 .download-formats legend { margin-bottom: 10px; }
-.download-format { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 15px 12px; cursor: pointer; }
-.download-format:has(input:checked) { border-color: var(--blue-600); background: var(--blue-100); }
-.download-format:has(input:focus-visible) { outline: 2px solid var(--blue-600); outline-offset: 3px; }
-.download-format input { accent-color: var(--blue-600); }
+.download-format { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 15px 12px; cursor: pointer; transition: border-color .15s, background .15s; }
+.download-format:has(input:checked) { border-color: var(--brand); background: var(--grad-soft); }
+.download-format:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 3px; }
+.download-format input { accent-color: var(--brand); }
 .download-format span { display: grid; gap: 6px; }
 .download-format small { color: var(--muted); font-size: 11px; }
 .download-directory { display: flex; align-items: center; gap: 16px; border-block: 1px solid var(--line); padding: 16px 0; margin-bottom: 4px; }
@@ -15,22 +15,22 @@
 .download-directory p { margin: 8px 0 0; color: var(--muted); overflow-wrap: anywhere; font-size: 12px; }
 .download-directory button { flex-shrink: 0; }
 .download-status-card { align-items: stretch; }
-.download-symbol { width: 70px; height: 70px; display: grid; place-items: center; margin: 14px auto 0; border-radius: 22px; background: var(--blue-100); color: var(--blue-600); font-size: 38px; }
+.download-symbol { width: 70px; height: 70px; display: grid; place-items: center; margin: 14px auto 0; border-radius: 22px; background: var(--grad-soft); color: var(--brand); font-size: 38px; }
 .download-song-title { text-align: center; overflow-wrap: anywhere; font-size: 18px; }
 #sunoDownloadMessage { text-align: center; margin: 0; color: var(--muted); line-height: 1.7; min-height: 48px; overflow-wrap: anywhere; }
-.download-badge { color: var(--muted); background: var(--blue-100); font-size: 11px; font-weight: 500; padding: 5px 9px; border-radius: 20px; white-space: nowrap; }
-.download-badge[data-status="succeeded"] { color: var(--mint-500); }
-.download-badge[data-status="failed"] { color: var(--pink-500); }
-#sunoDownloadProgress { width: 100%; height: 8px; border: 0; border-radius: 20px; overflow: hidden; accent-color: var(--blue-600); }
-#sunoDownloadProgress::-webkit-progress-bar { background: var(--blue-100); border-radius: 20px; }
-#sunoDownloadProgress::-webkit-progress-value { background: var(--blue-600); border-radius: 20px; }
-#sunoDownloadProgress:indeterminate { background: linear-gradient(90deg, var(--blue-100), var(--blue-600), var(--blue-100)); }
+.download-badge { color: var(--muted); background: #f1f0f4; font-size: 11px; font-weight: 500; padding: 5px 9px; border-radius: 20px; white-space: nowrap; }
+.download-badge[data-status="succeeded"] { color: #059669; background: var(--success-bg); }
+.download-badge[data-status="failed"] { color: var(--danger); background: var(--danger-bg); }
+#sunoDownloadProgress { width: 100%; height: 8px; border: 0; border-radius: 20px; overflow: hidden; accent-color: var(--brand); }
+#sunoDownloadProgress::-webkit-progress-bar { background: #f0f0f2; border-radius: 20px; }
+#sunoDownloadProgress::-webkit-progress-value { background: var(--grad); border-radius: 20px; }
+#sunoDownloadProgress:indeterminate { background: linear-gradient(90deg, #f0f0f2, var(--brand), #f0f0f2); }
 .download-actions { display: flex; justify-content: center; gap: 12px; }
 .download-footnote { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); }
 @media (max-width: 1100px) { .download-grid { grid-template-columns: 1fr; } .download-card { padding: 20px; } }
-/* Six modules must remain reachable at the desktop window's minimum height. */
+/* Three core modules must remain reachable at the desktop window's minimum height. */
 @media (max-height: 900px) {
   .sidebar { padding-bottom: 84px; }
-  .sidebar .nav-item { min-height: 64px; margin-bottom: 8px; padding-top: 8px; padding-bottom: 8px; }
-  .sidebar-cat-wrap { display: none; }
+  .sidebar .nav-item { min-height: 46px; margin-bottom: 8px; padding-top: 8px; padding-bottom: 8px; }
+  .sidebar-account { margin-top: auto; }
 }

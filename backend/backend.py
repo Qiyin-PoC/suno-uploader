@@ -685,6 +685,60 @@ def validate_suno_token(token: str, *, timeout: int = 20) -> Dict[str, Any]:
         return {"ok": False, "status_code": 0, "reason": f"token_check_error:{exc}"}
 
 
+def prepare_suno_token(timeout_sec: int = 25) -> Dict[str, Any]:
+    """在上传前校验已保存的 Suno 登录态，不引入官网软件权益依赖。"""
+    timeout_sec = max(1, min(25, int(timeout_sec or 25)))
+    started = time.monotonic()
+    deadline = started + timeout_sec
+    extension_mode = os.environ.get("GAOBAI_SUNO_LOGIN_METHOD", "").strip().lower() == "extension"
+    last_rejected_token = ""
+    last_check: Dict[str, Any] = {}
+
+    while True:
+        now = time.monotonic()
+        ctx = load_saved_token()
+        if not ctx:
+            # 扩展刷新是异步写入 token 文件；首次缺失时短暂等待。
+            if now < min(deadline, started + 2.0):
+                time.sleep(min(0.2, max(0.0, deadline - now)))
+                continue
+            return {"ok": False, "loggedIn": False, "code": "login_required",
+                    "reason": "请先登录 Suno 账号。"}
+
+        token = str(ctx.get("token") or "")
+        if token == last_rejected_token:
+            # 磁盘中可能仍是旧 Token；协议 2 扩展正在刷新时等待内容发生变化。
+            if extension_mode and now < deadline:
+                time.sleep(min(0.2, max(0.0, deadline - now)))
+                continue
+            return {"ok": False, "loggedIn": False, "code": "login_required",
+                    "reason": "Suno 登录已失效，请重新登录。", "tokenCheck": last_check}
+
+        remaining = max(1, int(deadline - now))
+        check = validate_suno_token(token, timeout=min(20, remaining))
+        if check.get("ok"):
+            account = ctx.get("account") if isinstance(ctx.get("account"), dict) else {}
+            expected_user = os.environ.get("GAOBAI_SUNO_ACCOUNT_USER_ID", "").strip()
+            actual_user = str(account.get("userId") or "").strip()
+            if expected_user and actual_user and actual_user != expected_user:
+                return {"ok": False, "loggedIn": False, "code": "account_mismatch",
+                        "reason": "saved_token_account_mismatch", "account": account}
+            return {"ok": True, "loggedIn": True, "code": "ready", "account": account,
+                    "tokenSource": ctx.get("tokenSource") or "saved", "tokenCheck": check,
+                    "verifiedAt": int(time.time())}
+
+        status = int(check.get("status_code") or 0)
+        if status in (401, 403):
+            last_rejected_token, last_check = token, check
+            if extension_mode and time.monotonic() < deadline:
+                continue
+            return {"ok": False, "loggedIn": False, "code": "login_required",
+                    "reason": "Suno 登录已失效，请重新登录。", "tokenCheck": check}
+        # 限流、服务端故障、超时和其他非鉴权响应都不是掉登录。
+        return {"ok": False, "loggedIn": False, "code": "network_error",
+                "reason": "Suno 网络暂不可用，请稍后重试。", "tokenCheck": check}
+
+
 def clean_device_id(value: str) -> str:
     value = str(value or "").strip().strip('"')
     return re.sub(r"[^a-zA-Z0-9-]", "", value)
@@ -4405,6 +4459,8 @@ def main() -> None:
     parser.add_argument("--import-suno-token", action="store_true")
     parser.add_argument("--check-login-token", action="store_true")
     parser.add_argument("--check-login-token-local", action="store_true")
+    parser.add_argument("--prepare-suno-token", action="store_true")
+    parser.add_argument("--auth-timeout-sec", type=int, default=25)
     parser.add_argument("--recover-suno-token", action="store_true")
     parser.add_argument("--token-recovery-attempts", type=int, default=4)
     parser.add_argument("--resume-candidate", action="store_true")
@@ -4497,6 +4553,9 @@ def main() -> None:
             "tokenCheck": check,
         }
         print(json.dumps(result, ensure_ascii=False), flush=True)
+        return
+    if args.prepare_suno_token:
+        print(json.dumps(prepare_suno_token(args.auth_timeout_sec), ensure_ascii=False), flush=True)
         return
     if args.resume_candidate:
         if not args.source:

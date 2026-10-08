@@ -53,5 +53,6 @@ test("界面只暴露上传、下载、历史三个导航板块", () => {
   assert.match(html, /Content-Security-Policy/);
   assert.match(html, /value="mp3"/);
   assert.match(html, /value="wav"/);
-  assert.doesNotMatch(html, /name="sunoDownloadFormat" value="m4a"/);
+  assert.match(html, /name="sunoDownloadFormat" value="m4a"/);
+  assert.match(html, /<title>期音科技 · Suno 歌曲上传器<\/title>/);
 });

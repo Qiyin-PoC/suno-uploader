@@ -1,0 +1,35 @@
+{
+  "appId": "com.qiyin.suno.uploader",
+  "productName": "Suno歌曲上传器",
+  "asar": true,
+  "npmRebuild": false,
+  "files": [
+    "electron/**/*",
+    "!electron/engine/**",
+    "assets/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    { "from": "assets", "to": "assets" },
+    { "from": "suno-login-extension", "to": "suno-login-extension" },
+    { "from": "build/macos/vendor/ffmpeg/darwin-arm64/ffmpeg", "to": "vendor/ffmpeg/darwin-arm64/ffmpeg" },
+    { "from": "build/macos/engine/qiyin-engine", "to": "engine" }
+  ],
+  "directories": {
+    "output": "dist-mac",
+    "buildResources": "build/macos"
+  },
+  "mac": {
+    "target": [
+      {
+        "target": "dir",
+        "arch": ["arm64"]
+      }
+    ],
+    "category": "public.app-category.music",
+    "icon": "icon.icns",
+    "identity": null,
+    "minimumSystemVersion": "11.0",
+    "darkModeSupport": true
+  }
+}
