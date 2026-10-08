@@ -36,3 +36,10 @@ tests/artifacts/
 # 系统
 .DS_Store
 Thumbs.db
+
+# Tauri / Mac 构建产物（体积大，不入库）
+tauri-preview/src-tauri/target/
+tauri-preview/src-tauri/runtime/
+tauri-preview/src-tauri/gen/
+tauri-preview/.build/
+.venv/
