@@ -7,6 +7,8 @@ const root = path.resolve(__dirname, "..");
 const fail = (message) => { console.error(`检查失败：${message}`); process.exitCode = 1; };
 const read = (relative) => fs.readFileSync(path.join(root, relative));
 const sha256 = (relative) => crypto.createHash("sha256").update(read(relative)).digest("hex");
+const sha256NormalizedText = (relative) => crypto.createHash("sha256")
+  .update(read(relative).toString("utf8").replace(/\r\n/g, "\n"), "utf8").digest("hex");
 
 const pkg = JSON.parse(read("package.json").toString("utf8"));
 if (pkg.version !== "5.0.4") fail(`package 版本应为 5.0.4，实际为 ${pkg.version}`);
@@ -34,14 +36,18 @@ const internalRuntimeBaseline = {
   "electron/main/suno-download.js": "56b7cc3e7c2124cf96846e9d6643d7b0d5e090686c2b266cfee9bca196da0d05",
   "electron/main/suno-download-batch.js": "9b0c79144af5519e631f93d53ea0144c78f3e1550a62569cce9cb7129f07a9c6",
   "electron/main/backend-process.js": "b611deb0265ab1c8ec51c9d73c691926a4bcdab841024048d62b9acc2a8b2e18",
-  "backend/backend.py": "87756d147fd367a35144a03b5353feb55422e0a3ec2178a26d1d840ba1950c0a",
+  "backend/backend.py": "0837b5d0ecaba0d2a21f651bd33445650e73bd0057c6b4bfa85381e94fdc45e7",
   "backend/suno_download_cli.py": "713a962ac44b3088c38a0c718e3fc146451219cc64aaab6809b5feb4dbd5756c",
-  "backend/suno_download_jobs.py": "d75f1b0dae230063ff4204c16282d9a3615db4bb42eca15e10e08abcef7e4ff8",
+  "backend/suno_download_jobs.py": "a3118a24a584ee401730f70e72eff4cf0b91fdb3258c77adb7392d3fbb501b9a",
   "python-embed/python.exe": "4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a"
 };
+const newlinePortableFiles = new Set(["backend/backend.py", "backend/suno_download_jobs.py"]);
 for (const [relative, expected] of Object.entries(internalRuntimeBaseline)) {
   if (!fs.existsSync(path.join(root, relative))) fail(`缺少内部免授权运行文件 ${relative}`);
-  else if (sha256(relative) !== expected) fail(`${relative} 偏离已验证的内部免授权运行基线`);
+  else {
+    const actual = newlinePortableFiles.has(relative) ? sha256NormalizedText(relative) : sha256(relative);
+    if (actual !== expected) fail(`${relative} 偏离已验证的内部免授权运行基线`);
+  }
 }
 const mainSource = read("electron/main/main.js").toString("utf8");
 if (mainSource.includes('requireActiveLicense("suno_upload"')) fail("上传仍然要求官网账号权益");
