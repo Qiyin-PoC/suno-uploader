@@ -1,22 +1,26 @@
 {
   "name": "suno-uploader",
-  "version": "5.0.0",
-  "description": "期音科技 Suno歌曲上传器（内部使用版）",
+  "version": "5.0.4",
+  "private": true,
+  "description": "期音科技 Suno歌曲上传器（上传、历史、下载）",
   "main": "electron/main/main.js",
   "author": "期音科技",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "check": "node scripts/check-release.js",
+    "test": "node --test tests/*.test.js",
+    "pack": "npm run check && electron-builder --dir",
+    "dist": "npm run check && electron-builder --win zip --x64"
   },
   "devDependencies": {
-    "electron": "^44.0.0",
-    "electron-builder": "^26.15.3"
+    "electron": "31.7.7",
+    "electron-builder": "26.15.3"
   },
   "build": {
     "appId": "com.qiyin.suno.uploader",
     "productName": "Suno歌曲上传器",
+    "artifactName": "${productName}-V${version}-免安装版.${ext}",
     "asar": true,
     "files": [
       "electron/**/*",
@@ -25,16 +29,20 @@
     ],
     "extraResources": [
       {
-        "from": "backend",
-        "to": "backend"
+        "from": "assets",
+        "to": "assets"
       },
       {
-        "from": "vendor",
-        "to": "vendor"
+        "from": "backend/backend.exe",
+        "to": "backend/backend.exe"
       },
       {
-        "from": "python-embed",
-        "to": "python-embed"
+        "from": "backend/suno_download_cli.exe",
+        "to": "backend/suno_download_cli.exe"
+      },
+      {
+        "from": "vendor/ffmpeg/win32-x64/ffmpeg.exe",
+        "to": "vendor/ffmpeg/win32-x64/ffmpeg.exe"
       },
       {
         "from": "suno-login-extension",
@@ -47,10 +55,8 @@
     "win": {
       "target": [
         {
-          "target": "dir",
-          "arch": [
-            "x64"
-          ]
+          "target": "zip",
+          "arch": ["x64"]
         }
       ]
     }

@@ -4,7 +4,7 @@ const DAW_TRACK_MIN_HEIGHT = 64;
 const DAW_TRACK_MAX_HEIGHT = 220;
 const DAW_ZOOM_MIN = 0.5;
 const DAW_ZOOM_MAX = 8;
-const ACCOUNT_AVATAR_CACHE_KEY = "qiyin-account-avatar-v2";
+const ACCOUNT_AVATAR_CACHE_KEY = "jfmhstudio-account-avatar-v2";
 
 const state = {
   audioPath: "",
@@ -20,8 +20,8 @@ const state = {
   separationOutputDir: "",
   separationModels: [],
   selectedSeparationModel: "4_HP-Vocal-UVR.pth",
-  separationDeviceMode: ["auto", "cuda", "cpu"].includes(localStorage.getItem("qiyin-separation-device"))
-    ? localStorage.getItem("qiyin-separation-device")
+  separationDeviceMode: ["auto", "cuda", "cpu"].includes(localStorage.getItem("jfmhstudio-separation-device"))
+    ? localStorage.getItem("jfmhstudio-separation-device")
     : "auto",
   separationDevices: { controllers: [], hasNvidiaGpu: false, gpuRuntimeInstalled: false },
   vocalsPath: "",
@@ -43,10 +43,9 @@ const state = {
   uploadMetrics: { total: 0, submitted: 0, done: 0, elapsed: 0, finished: false },
   busy: false,
   theme: "light",
-  // 内部使用版：授权恒为有效（永久），不再依赖官网账号/激活/软件锁
-  licenseValid: true,
-  licenseReasonCode: "internal_permanent",
-  licenseCountdown: "永久",
+  licenseValid: false,
+  licenseReasonCode: "account_not_logged_in",
+  licenseCountdown: "未激活",
   licenseExpiresAt: null,
   licenseTimer: null,
   licenseExpiryCheckInFlight: false,
@@ -74,7 +73,7 @@ const state = {
   dawClipTrim: null,
   dawZoom: 1,
   dawPlayhead: 0,
-  dawRulerMode: localStorage.getItem("qiyin-daw-ruler") === "bars" ? "bars" : "time",
+  dawRulerMode: localStorage.getItem("jfmhstudio-daw-ruler") === "bars" ? "bars" : "time",
   dawSelection: null,
   dawSelectionDrag: null,
   dawSelectionResize: null,
@@ -154,9 +153,9 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const APP_VERSION = "V5.0.0";
-const THEME_STORAGE_KEY = "qiyin-theme";
-const SEPARATION_DEVICE_STORAGE_KEY = "qiyin-separation-device";
+const APP_VERSION = "V5.0.4";
+const THEME_STORAGE_KEY = "jfmhstudio-theme";
+const SEPARATION_DEVICE_STORAGE_KEY = "jfmhstudio-separation-device";
 const LICENSE_REQUIRED_MESSAGE = "：请登录官网账号并同步软件权益后使用。";
 const OPEN_AUDIO_PATTERN = /\.(mp3|wav|m4a|flac|aac|ogg|oga|opus|ape|wma|alac|mp4)$/i;
 const UNLOCKER_SUPPORTED_EXTS = [
@@ -411,6 +410,7 @@ function setActiveTempoChip(tempo) {
 
 function setBusy(busy) {
   state.busy = busy;
+  if(!busy)queueMicrotask(()=>window.refreshSunoConnectionUi?.());
   ["sunoAccountSelect","sunoExtensionBtn","logoutBtn"].forEach(id=>{if($(id))$(id).disabled=busy;});
   const blocked = !state.licenseValid;
   $("startBtn").disabled = busy || blocked;
@@ -440,6 +440,8 @@ function updateUploadAudioButtons() {
 }
 
 function setStatus(text, pill = "", pillKind = "running") {
+  state.statusRevision = (state.statusRevision || 0) + 1;
+  state.currentStatusText=text;
   // 1) 更新页面中部主状态标题
   $("mainStatus").textContent = text;
   // 2) 把"任务状态"小标签设置到 statusPill 内部新增的 #taskPill，
@@ -515,8 +517,8 @@ const TASK_SOUND_URLS = {
   success: new URL("../../assets/sounds/task-complete.mp3", window.location.href).href,
   failure: new URL("../../assets/sounds/system-failure.mp3", window.location.href).href,
 };
-const TASK_SOUND_ENABLED_STORAGE_KEY = "qiyin-task-sound-enabled";
-const TASK_SOUND_VOLUME_STORAGE_KEY = "qiyin-task-sound-volume";
+const TASK_SOUND_ENABLED_STORAGE_KEY = "jfmhstudio-task-sound-enabled";
+const TASK_SOUND_VOLUME_STORAGE_KEY = "jfmhstudio-task-sound-volume";
 const taskSoundPlayers = new Map();
 let activeTaskSound = null;
 let taskSoundsPrimed = false;
@@ -736,8 +738,7 @@ function setCurrentAudio(file) {
   state.audioPath = file || "";
   $("audioName").textContent = file ? basename(file) : "未选择";
   $("audioPath").textContent = file || "请选择 mp3、wav、m4a、flac、ogg 等开放音频";
-  if (file) {
-    // 每次拖入/选择音频，歌曲名自动更新为该音频的文件名（去扩展名）
+  if (file && !$("titleInput").value.trim()) {
     $("titleInput").value = basename(file).replace(/\.[^.]+$/, "");
   }
   updateUploadAudioButtons();
@@ -1144,20 +1145,175 @@ async function sendToSunoAndUpload(file, { title, switchPanel = true, logTag = "
 // 强制更新时禁用关闭按钮，必须下载或退出。
 // ============================================================================
 async function checkForUpdatesAndAnnouncements() {
-  // 内部使用版：不检查官网更新/公告
+  // 1) 检查更新
+  let updateInfo = null;
+  try {
+    updateInfo = await window.gaobai.checkUpdate();
+  } catch (_) {
+    updateInfo = null;
+  }
+  if (updateInfo && updateInfo.ok && updateInfo.has_update && !updateInfo.already_seen) {
+    const dismissed = await showUpdateModal(updateInfo);
+    // 标记此版本已提醒，避免重复弹窗
+    try {
+      await window.gaobai.markUpdateSeen(updateInfo.latest_version);
+    } catch (_) {
+      log("标记更新已提醒失败");
+    }
+    if (dismissed === "force_quit") {
+      // 用户在强制更新弹窗选了"退出"
+      try { window.close(); } catch (_) {}
+      return;
+    }
+  }
+
+  // 2) 拉取系统公告（未读 + 按优先级）
+  try {
+    const data = await window.gaobai.listAnnouncements({});
+    if (data && data.ok && Array.isArray(data.items) && data.items.length > 0) {
+      await showAnnouncementModal(data.items);
+    }
+  } catch (_) {}
 }
 
 // 返回 'dismissed' 或 'force_quit'
 function showUpdateModal(info) {
-  // 内部使用版：更新弹窗已移除
-  return Promise.resolve("dismissed");
+  return new Promise((resolve) => {
+    const modal = $("updateNotice");
+    if (!modal) return resolve("dismissed");
+    const badge = $("updateBadge");
+    const versionLine = $("updateVersionLine");
+    const notes = $("updateNotes");
+    const notesList = $("updateNotesList");
+    const closeBtn = $("updateNoticeCloseBtn");
+    const downloadBtn = $("updateDownloadBtn");
+    const quitBtn = $("updateQuitBtn");
+    const forceButtons = $("updateForceButtons");
+
+    badge.textContent = `V${info.latest_version || ""}`;
+    const cv = info.current_version || APP_VERSION;
+    const lv = info.latest_version || "";
+    versionLine.textContent = `当前版本 V${cv} → 最新版本 `;
+    const latestVersion = document.createElement("span");
+    latestVersion.className = "latest";
+    latestVersion.textContent = `V${lv}`;
+    versionLine.appendChild(latestVersion);
+    notes.textContent = info.title || "发现新版本，建议升级获取最新功能。";
+    // release_notes 可能是多行字符串，按行解析成 ul
+    const lines = (info.release_notes || "")
+      .split(/\r?\n/)
+      .map(s => s.replace(/^[\s\-\*\u2022]+/, "").trim())
+      .filter(Boolean);
+    notesList.innerHTML = "";
+    for (const ln of lines) {
+      const li = document.createElement("li");
+      li.textContent = ln;
+      notesList.appendChild(li);
+    }
+
+    const force = !!info.force_update;
+    modal.classList.toggle("force-update", force);
+    if (force) {
+      closeBtn.classList.add("hidden");
+      forceButtons.classList.remove("hidden");
+      downloadBtn.classList.add("danger");
+    } else {
+      closeBtn.classList.remove("hidden");
+      forceButtons.classList.add("hidden");
+      downloadBtn.classList.remove("danger");
+    }
+    modal.classList.remove("hidden");
+
+    const dismiss = () => {
+      modal.classList.add("hidden");
+      // 解绑所有监听避免重复触发
+      closeBtn.onclick = null;
+      downloadBtn.onclick = null;
+      quitBtn.onclick = null;
+      resolve("dismissed");
+    };
+    const download = () => {
+      // 与 python 端服务器列表保持一致，主备双域名
+      const url = info.download_url || "https://gblicensehub.xyz";
+      try {
+        window.gaobai.openUrl(url);
+      } catch (_) {
+        try { window.open(url, "_blank"); } catch (_) {}
+      }
+      if (force) {
+        // 强制更新不允许继续留在软件内
+        try { window.close(); } catch (_) {}
+        resolve("force_quit");
+      } else {
+        dismiss();
+      }
+    };
+    const quit = () => {
+      modal.classList.add("hidden");
+      closeBtn.onclick = null;
+      downloadBtn.onclick = null;
+      quitBtn.onclick = null;
+      resolve("force_quit");
+      try { window.close(); } catch (_) {}
+    };
+    closeBtn.onclick = dismiss;
+    downloadBtn.onclick = download;
+    quitBtn.onclick = quit;
+  });
 }
 
 const dismissedAnnouncementIds = new Set();
 
 function showAnnouncementModal(items) {
-  // 内部使用版：公告弹窗已移除
-  return Promise.resolve();
+  return new Promise((resolve) => {
+    const modal = $("announcementNotice");
+    const visibleItems = items.filter((item) => !dismissedAnnouncementIds.has(String(item?.id ?? "")));
+    if (!modal || visibleItems.length === 0) return resolve();
+    const icon = $("announcementIcon");
+    const counter = $("announcementCounter");
+    const title = $("announcementTitle");
+    const meta = $("announcementMeta");
+    const content = $("announcementContent");
+    const closeBtn = $("announcementCloseBtn");
+    const prevBtn = $("announcementPrevBtn");
+    const nextBtn = $("announcementNextBtn");
+
+    let idx = 0;
+    const render = () => {
+      const it = visibleItems[idx];
+      icon.textContent = it.type === "update" ? "🚀" : (it.type === "warning" ? "⚠️" : "📢");
+      counter.textContent = `${idx + 1} / ${visibleItems.length}`;
+      title.textContent = it.title || "系统公告";
+      meta.textContent = `类型：${it.type || "system"} · 优先级 ${it.priority}`;
+      content.textContent = it.content || "";
+      prevBtn.classList.toggle("hidden", idx === 0);
+      nextBtn.classList.toggle("hidden", idx >= visibleItems.length - 1);
+    };
+    render();
+
+    modal.classList.remove("hidden");
+
+    const close = () => {
+      const ids = visibleItems.map((item) => item.id);
+      ids.forEach((id) => dismissedAnnouncementIds.add(String(id ?? "")));
+      // 先关闭界面，再后台保存已读状态；后端响应不能阻塞关闭按钮。
+      modal.classList.add("hidden");
+      closeBtn.onclick = null;
+      prevBtn.onclick = null;
+      nextBtn.onclick = null;
+      resolve();
+      try {
+        Promise.resolve(window.gaobai.markAnnouncementsRead(ids)).then((result) => {
+          if (result?.ok === false) log("公告已关闭，但保存已读状态失败");
+        }).catch(() => log("公告已关闭，但保存已读状态失败"));
+      } catch (_) {
+        log("公告已关闭，但保存已读状态失败");
+      }
+    };
+    closeBtn.onclick = close;
+    prevBtn.onclick = () => { if (idx > 0) { idx--; render(); } };
+    nextBtn.onclick = () => { if (idx < visibleItems.length - 1) { idx++; render(); } };
+  });
 }
 
 function sanitizeLoginMessage(message) {
@@ -1309,20 +1465,29 @@ async function refreshHistory() {
 
 // 检查 Suno 登录状态（启动时自动检测）
 async function checkLoginStatus() {
+  const revision = state.statusRevision || 0;
   try {
     const result = await window.gaobai.checkLoginStatus();
     if (result?.accountId && window.sunoAccountBinding && result.accountId !== window.sunoAccountBinding().accountId) return;
+    if (state.busy || (state.statusRevision || 0) !== revision) return;
     if (result && result.loggedIn) {
       $("loginBtn").style.display = "none";
       $("logoutBtn").style.display = "";
       const src = result.tokenSource || "已保存";
-      setStatus(`Suno 已连接 · ${src}`);
-      setUploadNotice(`Suno 已连接，登录状态来源：${src}。`, "success");
+      setStatus("Suno 已连接");
+      setUploadNotice("Suno 登录已验证，可以开始上传。", "success");
       log(`Suno 登录状态有效，来源：${src}。`);
     } else {
       $("loginBtn").style.display = "";
       $("logoutBtn").style.display = "none";
-      setUploadNotice("Suno 未登录，请先点击登录 Suno。", "warn");
+      if(result?.hasCredentials) {
+        const message=result.loginMethod==='extension' ? '登录资料已保存，正在恢复连接；请保持原账号 Suno 网页打开。' : '登录资料已保存，上传时会尝试恢复原账号；请检查网络或打开原账号网页。';
+        setStatus('Suno 连接待恢复');
+        setUploadNotice(message,'warn');
+      } else {
+        setStatus('Suno 未登录');
+        setUploadNotice("Suno 未登录，请先点击登录 Suno。", "warn");
+      }
     }
   } catch (_) { /* 静默失败 */ }
 }
@@ -1395,10 +1560,8 @@ function renderHistory() {
     const el = document.createElement("article");
     el.className = "history-item";
     el.innerHTML = `
-      <div class="history-main">
-        <div class="history-title"></div>
-        <div class="history-meta"></div>
-      </div>
+      <div class="history-title"></div>
+      <div class="history-meta"></div>
       <div class="history-actions">
         <button data-action="open">打开</button>
         <button data-action="copy">复制</button>
@@ -1520,7 +1683,11 @@ async function refreshSeparationDevices() {
 function handleBackendEvent(event) {
   if (!event || typeof event !== "object") return;
   const batchEvent = Boolean(event.batchMode);
-  if (event.type === "log") {
+  if (event.type === "startup") {
+    setStatus(event.message || "正在启动上传引擎…", "准备上传");
+    setUploadEtaBadge("正在准备", "尚未开始发送音频");
+    if (event.progress !== undefined) setProgress(event.progress);
+  } else if (event.type === "log") {
     if (event.detail) return;
     log(event.message || "");
   } else if (event.type === "status") {
@@ -1657,7 +1824,7 @@ function handleBackendEvent(event) {
   } else if (event.type === "auth_required") {
     if (!batchEvent) playTaskSound("failure");
     log(event.message || "Suno Token 无法恢复，上传任务已停止，请重新登录 Suno。");
-    restoreSunoLoginUi("Suno Token 无法恢复，上传已停止。请重新登录 Suno 后选择继续旧任务或新建项目。");
+    restoreSunoLoginUi(event.message || "Suno 会话需要恢复，上传已暂停。请检查原账号网页或登录助手后继续。");
     refreshHistory();
   } else if (event.type === "failed") {
     if (batchEvent) {
@@ -1670,7 +1837,8 @@ function handleBackendEvent(event) {
     setBusy(false);
     setStatus("任务失败", "任务失败", "error");
     setUploadEtaBadge("上传失败", "请查看日志", "error");
-    log(`任务失败，退出码：${event.code}`);
+    log(event.message || `任务失败，退出码：${event.code ?? "未知"}`);
+    if (event.message) setUploadNotice(event.message, "error");
     // 检测版权拒收，输出友好中文建议到日志（不弹窗）
     const recentLog = ($("logPanel") && $("logPanel").innerText) || "";
     if (/版权指纹|片段被 Suno 拒收|片段被拒绝/.test(recentLog)) {
@@ -3043,12 +3211,31 @@ let _pollingTimer = null;
 const POLLING_INTERVAL_MS = 120_000; // 120 秒
 
 function startPolling() {
-  // 内部使用版：不做官网更新/公告轮询
   if (_pollingTimer) return;
   _pollingTimer = setInterval(async () => {
     try {
-      // 保留空轮询，避免其它逻辑依赖定时器；更新/公告检查已禁用
+      // 更新检查
+      const updateInfo = await window.gaobai.checkUpdate();
+      if (updateInfo && updateInfo.ok && updateInfo.has_update && !updateInfo.already_seen) {
+        const dismissed = await showUpdateModal(updateInfo);
+        try {
+          await window.gaobai.markUpdateSeen(updateInfo.latest_version);
+        } catch (_) {
+          log("标记更新已提醒失败");
+        }
+        if (dismissed === "force_quit") {
+          try { window.close(); } catch (_) {}
+          return;
+        }
+      }
+
+      // 公告检查
+      const data = await window.gaobai.listAnnouncements({});
+      if (data && data.ok && Array.isArray(data.items) && data.items.length > 0) {
+        await showAnnouncementModal(data.items);
+      }
     } catch (_) {
+      // 轮询失败不影响主程序
     }
   }, POLLING_INTERVAL_MS);
 }
@@ -3065,8 +3252,39 @@ function shouldLockFromOnlineLicense(status) {
 }
 
 async function runStartupLicenseVerify(localStatus) {
-  // 内部使用版：不做启动授权核对
-  updateLicenseUI({ ok: true, valid: true, is_permanent: true });
+  try {
+    const online = await window.gaobai.startupVerifyLicense();
+    if (online?.valid) {
+      updateLicenseUI(online);
+      return;
+    }
+    if (shouldLockFromOnlineLicense(online)) {
+      updateLicenseUI(online);
+      await showActivationRequiredModal(online);
+      return;
+    }
+    if (localStatus?.valid) {
+      log("授权后台校验暂时失败，已继续使用本地有效授权。");
+      updateLicenseUI(localStatus);
+    } else {
+      const fallback = online || localStatus || { valid: false, reason_code: "license_network_error" };
+      updateLicenseUI(fallback);
+      await showActivationRequiredModal(fallback);
+    }
+  } catch (_) {
+    if (localStatus?.valid) {
+      log("授权后台校验暂时失败，已继续使用本地有效授权。");
+      updateLicenseUI(localStatus);
+      return;
+    }
+    let fallback = null;
+    try {
+      fallback = await window.gaobai.licenseStatus();
+    } catch (_) {}
+    const status = fallback || { valid: false, reason_code: "license_network_error" };
+    updateLicenseUI(status);
+    await showActivationRequiredModal(status);
+  }
 }
 
 function accountInitials(name) {
@@ -3202,42 +3420,113 @@ function updateStableAccountAvatar(account, name) {
 }
 
 function updateAccountUI(account) {
-  // 内部使用版：官网账号UI已移除，此函数仅维护状态，不做任何显示更新
   const next = account && typeof account === "object" ? account : { loggedIn: false, valid: false };
   state.account = next;
+  const loggedIn = Boolean(next.loggedIn);
+  const valid = Boolean(next.valid);
+  const name = loggedIn ? (next.user?.name || next.user?.email || "告白悸风用户") : "登录告白悸风账号";
+  const meta = valid
+    ? formatAccountEntitlementMeta(next)
+    : (loggedIn ? "暂无软件权益，可前往商城购买" : "同步会员与软件权益");
+
+  $("accountName").textContent = name;
+  $("accountMeta").textContent = meta;
+  $("accountMenuStatus").textContent = valid
+    ? `已验证：${meta}`
+    : (loggedIn ? "当前账号暂无可用权益，可前往官网商城购买。" : "登录后自动验证官网会员与软件权益。");
+  updateStableAccountAvatar(next, name);
+  $("accountLoginBtn").style.display = loggedIn ? "none" : "";
+  $("accountProfileBtn").style.display = loggedIn ? "" : "none";
+  $("accountDevicesBtn").style.display = loggedIn ? "" : "none";
+  $("accountStoreBtn").style.display = "";
+  $("accountLogoutBtn").style.display = loggedIn ? "" : "none";
 }
 
 async function refreshAccountStatus() {
-  // 内部使用版：不做官网账号联网校验，恒为未登录/恒授权
-  updateAccountUI({ loggedIn: false, valid: false });
-  updateLicenseUI({ ok: true, valid: true, is_permanent: true });
-  return { loggedIn: false, valid: false };
+  try {
+    const account = await window.gaobai.accountStatus();
+    updateAccountUI(account);
+    updateLicenseUI(accountLicenseStatus(account));
+    return account;
+  } catch (error) {
+    const unavailable = state.account?.loggedIn
+      ? { ...state.account, reason_code: "account_network_error", connection_status: "reconnecting" }
+      : { loggedIn: false, valid: false, reason_code: "account_network_error" };
+    updateAccountUI(unavailable);
+    updateLicenseUI(accountLicenseStatus(unavailable));
+    return null;
+  }
 }
 
 async function beginAccountLogin() {
-  // 内部使用版：官网账号登录已移除
-  log("官网账号登录已停用。", "warn");
-  return;
+  const result = await window.gaobai.accountLogin();
+  if (!result?.ok) {
+    log(result?.message || "无法打开账号登录窗口。", "error");
+    return;
+  }
+  showAccountLoginOverlay();
+  $("accountMenuStatus").textContent = "请在当前软件内完成登录，软件会自动同步权益。";
 }
 
 function showAccountLoginOverlay() {
-  // 内部使用版：官网账号登录UI已移除
+  const overlay = $("accountLoginOverlay");
+  if (!overlay) return;
+  $("accountAssistOverlay")?.classList.add("hidden");
+  $("accountLoginError")?.classList.add("hidden");
+  $("accountLoginError")?.classList.remove("success");
+  $("accountLoginHelp")?.classList.add("hidden");
+  $("accountLoginDevicesBtn")?.classList.add("hidden");
+  $("accountLoginStoreBtn")?.classList.add("hidden");
+  overlay.classList.remove("hidden");
+  loadAccountLoginPreferences();
+  setTimeout(() => $("accountLoginEmail")?.focus(), 40);
 }
 
 function hideAccountLoginOverlay() {
-  // 内部使用版：官网账号登录UI已移除
+  $("accountLoginOverlay")?.classList.add("hidden");
+  setAccountPasswordVisibility(false);
+  $("accountLoginPassword").value = "";
+  $("accountLoginError")?.classList.add("hidden");
+  $("accountLoginError")?.classList.remove("success");
+  $("accountLoginHelp")?.classList.add("hidden");
 }
 
 function setAccountPasswordVisibility(visible) {
-  // 内部使用版：官网账号登录UI已移除
+  const input = $("accountLoginPassword");
+  const button = $("accountLoginPasswordToggle");
+  if (!input || !button) return;
+  const showing = Boolean(visible);
+  input.type = showing ? "text" : "password";
+  button.setAttribute("aria-pressed", String(showing));
+  button.setAttribute("aria-label", showing ? "隐藏密码" : "显示密码");
+  button.title = showing ? "隐藏密码" : "显示密码";
+  button.querySelector(".account-password-eye")?.classList.toggle("hidden", showing);
+  button.querySelector(".account-password-eye-off")?.classList.toggle("hidden", !showing);
 }
 
 function syncAccountLoginOptions() {
-  // 内部使用版：官网账号登录UI已移除
+  const remember = $("accountRememberPassword");
+  const autoLogin = $("accountAutoLogin");
+  const autoLoginOption = $("accountAutoLoginOption");
+  if (!remember || !autoLogin) return;
+  if (!remember.checked) autoLogin.checked = false;
+  autoLogin.disabled = !remember.checked;
+  autoLoginOption?.classList.toggle("is-disabled", !remember.checked);
 }
 
 async function loadAccountLoginPreferences() {
-  // 内部使用版：官网账号登录UI已移除
+  const emailInput = $("accountLoginEmail");
+  const passwordInput = $("accountLoginPassword");
+  const remember = $("accountRememberPassword");
+  const autoLogin = $("accountAutoLogin");
+  if (!emailInput || !passwordInput || !remember || !autoLogin) return;
+  const preferences = await window.gaobai.accountLoginPreferences?.().catch(() => null);
+  if (!preferences?.ok) return;
+  if (!emailInput.value.trim()) emailInput.value = preferences.email || "";
+  if (!passwordInput.value) passwordInput.value = preferences.password || "";
+  remember.checked = Boolean(preferences.rememberPassword);
+  autoLogin.checked = Boolean(preferences.autoLogin);
+  syncAccountLoginOptions();
 }
 
 let accountAssistMode = "register";
@@ -3245,75 +3534,405 @@ let accountAssistCooldownUntil = 0;
 let accountAssistCooldownTimer = null;
 
 function setAccountAssistMessage(message, success = false) {
-  // 内部使用版：官网注册UI已移除
+  const element = $("accountAssistError");
+  if (!element) return;
+  element.textContent = message || "请求失败，请稍后重试。";
+  element.classList.toggle("success", success);
+  element.classList.remove("hidden");
 }
 
 function updateAccountAssistCooldown() {
-  // 内部使用版：官网注册UI已移除
+  const button = $("accountAssistSendCodeBtn");
+  if (!button) return;
+  const remaining = Math.max(0, Math.ceil((accountAssistCooldownUntil - Date.now()) / 1000));
+  button.disabled = remaining > 0;
+  button.textContent = remaining > 0 ? `${remaining} 秒后重试` : "获取验证码";
+  if (remaining <= 0 && accountAssistCooldownTimer) {
+    clearInterval(accountAssistCooldownTimer);
+    accountAssistCooldownTimer = null;
+  }
 }
 
 function startAccountAssistCooldown(seconds = 60) {
-  // 内部使用版：官网注册UI已移除
+  accountAssistCooldownUntil = Date.now() + Math.max(1, Number(seconds) || 60) * 1000;
+  if (accountAssistCooldownTimer) clearInterval(accountAssistCooldownTimer);
+  updateAccountAssistCooldown();
+  accountAssistCooldownTimer = setInterval(updateAccountAssistCooldown, 1000);
 }
 
 function showAccountAssist(mode) {
-  // 内部使用版：官网注册UI已移除
+  accountAssistMode = mode === "recovery" ? "recovery" : "register";
+  const recovery = accountAssistMode === "recovery";
+  $("accountLoginOverlay")?.classList.add("hidden");
+  $("accountAssistNameField")?.classList.toggle("hidden", recovery);
+  $("accountAssistEyebrow").textContent = recovery ? "PASSWORD RECOVERY" : "CREATE ACCOUNT";
+  $("accountAssistTitle").textContent = recovery ? "找回密码" : "免费注册";
+  $("accountAssistIntro").textContent = recovery
+    ? "输入注册邮箱并获取验证码，验证后即可设置新密码。"
+    : "注册后即可购买会员，并在软件中同步账号权益。";
+  $("accountAssistPasswordLabel").textContent = recovery ? "新密码" : "密码";
+  $("accountAssistConfirmationLabel").textContent = recovery ? "确认新密码" : "确认密码";
+  $("accountAssistSubmitBtn").textContent = recovery ? "确认修改密码" : "创建账号";
+  $("accountAssistEmail").value = $("accountLoginEmail")?.value.trim() || "";
+  $("accountAssistName").value = "";
+  $("accountAssistCode").value = "";
+  $("accountAssistPassword").value = "";
+  $("accountAssistPasswordConfirmation").value = "";
+  $("accountAssistError")?.classList.add("hidden");
+  $("accountAssistError")?.classList.remove("success");
+  updateAccountAssistCooldown();
+  $("accountAssistOverlay")?.classList.remove("hidden");
+  setTimeout(() => (recovery ? $("accountAssistEmail") : $("accountAssistName"))?.focus(), 40);
 }
 
 function hideAccountAssist(returnToLogin = true) {
-  // 内部使用版：官网注册UI已移除
+  $("accountAssistOverlay")?.classList.add("hidden");
+  $("accountAssistPassword").value = "";
+  $("accountAssistPasswordConfirmation").value = "";
+  if (returnToLogin) showAccountLoginOverlay();
 }
 
 function setAccountAssistSubmitting(submitting) {
-  // 内部使用版：官网注册UI已移除
+  $("accountAssistSubmitBtn").disabled = submitting;
+  $("accountAssistBackBtn").disabled = submitting;
+  $("accountAssistCloseBtn").disabled = submitting;
+  if (submitting) $("accountAssistSubmitBtn").textContent = accountAssistMode === "recovery" ? "正在修改密码..." : "正在创建账号...";
+  else $("accountAssistSubmitBtn").textContent = accountAssistMode === "recovery" ? "确认修改密码" : "创建账号";
 }
 
 function setupAccountAssist() {
-  // 内部使用版：官网注册绑定已移除
+  const close = () => hideAccountAssist(true);
+  $("accountRegisterBtn")?.addEventListener("click", () => showAccountAssist("register"));
+  $("accountForgotPasswordBtn")?.addEventListener("click", () => showAccountAssist("recovery"));
+  $("accountAssistCloseBtn")?.addEventListener("click", close);
+  $("accountAssistBackBtn")?.addEventListener("click", close);
+  $("accountAssistBackdrop")?.addEventListener("click", close);
+  $("accountAssistCode")?.addEventListener("input", (event) => {
+    event.target.value = event.target.value.replace(/\D/g, "").slice(0, 6);
+  });
+  $("accountAssistSendCodeBtn")?.addEventListener("click", async () => {
+    const email = $("accountAssistEmail").value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setAccountAssistMessage("请输入正确的邮箱地址。");
+      return;
+    }
+    const button = $("accountAssistSendCodeBtn");
+    button.disabled = true;
+    button.textContent = "发送中...";
+    const result = await window.gaobai.accountSendEmailCode({
+      email,
+      purpose: accountAssistMode === "recovery" ? "password_reset" : "register",
+    }).catch(() => ({ ok: false, message: "验证码服务暂时不可用。" }));
+    if (!result?.ok) {
+      setAccountAssistMessage(result?.message || "验证码发送失败，请稍后重试。");
+      if (result?.retry_after) startAccountAssistCooldown(result.retry_after);
+      else updateAccountAssistCooldown();
+      return;
+    }
+    setAccountAssistMessage(result.message || "验证码已发送，请检查邮箱。", true);
+    startAccountAssistCooldown(result.cooldown || 60);
+  });
+  $("accountAssistForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = {
+      name: $("accountAssistName").value.trim(),
+      email: $("accountAssistEmail").value.trim(),
+      code: $("accountAssistCode").value.trim(),
+      password: $("accountAssistPassword").value,
+      passwordConfirmation: $("accountAssistPasswordConfirmation").value,
+    };
+    setAccountAssistSubmitting(true);
+    $("accountAssistError")?.classList.add("hidden");
+    try {
+      const result = accountAssistMode === "recovery"
+        ? await window.gaobai.accountResetPassword(payload)
+        : await window.gaobai.accountRegister(payload);
+      if (!result?.ok) {
+        setAccountAssistMessage(result?.message || "操作失败，请检查填写内容。");
+        return;
+      }
+      $("accountLoginEmail").value = result.email || payload.email;
+      hideAccountAssist(true);
+      const loginMessage = $("accountLoginError");
+      loginMessage.textContent = result.message;
+      loginMessage.classList.add("success");
+      loginMessage.classList.remove("hidden");
+    } catch (_) {
+      setAccountAssistMessage("账号服务暂时不可用，请稍后重试。");
+    } finally {
+      setAccountAssistSubmitting(false);
+      $("accountAssistPassword").value = "";
+      $("accountAssistPasswordConfirmation").value = "";
+    }
+  });
 }
 
 function formatAccountDeviceTime(value) {
-  // 内部使用版：设备管理UI已移除
-  return "--";
+  const timestamp = Date.parse(value || "");
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString("zh-CN") : "--";
 }
 
 function hideAccountDevicesOverlay() {
-  // 内部使用版：设备管理UI已移除
+  $("accountDevicesOverlay")?.classList.add("hidden");
 }
 
 function renderAccountDevices(result) {
-  // 内部使用版：设备管理UI已移除
+  const list = $("accountDevicesList");
+  if (!list) return;
+  list.replaceChildren();
+  const devices = Array.isArray(result?.devices) ? result.devices : [];
+  $("accountDevicesMeta").textContent = `已绑定 ${devices.length} 台 / 上限 ${Number(result?.device_limit || state.account?.device_limit || 0) || "--"} 台`;
+  if (!devices.length) {
+    const empty = document.createElement("p");
+    empty.className = "account-device-empty";
+    empty.textContent = "当前没有可管理的已绑定设备。";
+    list.appendChild(empty);
+    return;
+  }
+  devices.forEach((device) => {
+    const publicId = String(device.device_public_id || device.public_id || device.id || "");
+    const online = Boolean(device.is_online ?? device.online ?? String(device.status || "").toLowerCase() === "online");
+    const row = document.createElement("div");
+    row.className = "account-device-row";
+    const copy = document.createElement("div");
+    copy.className = "account-device-copy";
+    const title = document.createElement("div");
+    title.className = "account-device-title";
+    const name = document.createElement("strong");
+    name.textContent = device.device_name || device.name || "未命名设备";
+    const badge = document.createElement("span");
+    badge.className = `account-device-status${online ? " online" : ""}`;
+    badge.textContent = online ? "在线" : "离线";
+    title.append(name, badge);
+    const meta = document.createElement("p");
+    meta.className = "account-device-meta";
+    meta.textContent = `${device.os || "未知系统"}${device.os_version ? ` ${device.os_version}` : ""} · 绑定 ${formatAccountDeviceTime(device.bound_at || device.created_at)} · 活跃 ${formatAccountDeviceTime(device.last_active_at || device.last_seen_at)}`;
+    copy.append(title, meta);
+    const unbind = document.createElement("button");
+    unbind.className = "mini-button soft";
+    unbind.type = "button";
+    unbind.textContent = "解绑";
+    unbind.disabled = !publicId;
+    unbind.addEventListener("click", async () => {
+      unbind.disabled = true;
+      unbind.textContent = "解绑中...";
+      const response = await window.gaobai.accountUnbindDevice(publicId).catch(() => ({ ok: false, message: "暂时无法解绑设备。" }));
+      if (!response?.ok) {
+        $("accountDevicesError").textContent = response?.message || "暂时无法解绑设备。";
+        $("accountDevicesError").classList.remove("hidden");
+        unbind.disabled = false;
+        unbind.textContent = "解绑";
+        return;
+      }
+      await refreshAccountDevices();
+    });
+    row.append(copy, unbind);
+    list.appendChild(row);
+  });
 }
 
 async function refreshAccountDevices() {
-  // 内部使用版：设备管理UI已移除
-  return { ok: true, devices: [] };
+  const refresh = $("accountDevicesRefreshBtn");
+  const error = $("accountDevicesError");
+  if (refresh) refresh.disabled = true;
+  error?.classList.add("hidden");
+  try {
+    const result = await window.gaobai.accountDevices();
+    if (!result?.ok) {
+      if (error) {
+        error.textContent = result?.message || "设备列表读取失败。";
+        error.classList.remove("hidden");
+      }
+      return result;
+    }
+    renderAccountDevices(result);
+    return result;
+  } finally {
+    if (refresh) refresh.disabled = false;
+  }
 }
 
 async function showAccountDevicesOverlay() {
-  // 内部使用版：设备管理UI已移除
+  $("accountDevicesOverlay")?.classList.remove("hidden");
+  $("accountDevicesMeta").textContent = "正在读取设备列表...";
+  await refreshAccountDevices();
 }
 
 function setAccountLoginSubmitting(submitting) {
-  // 内部使用版：官网账号登录UI已移除
+  const submit = $("accountLoginSubmitBtn");
+  const cancel = $("accountLoginCancelBtn");
+  const close = $("accountLoginCloseBtn");
+  if (submit) {
+    submit.disabled = submitting;
+    submit.textContent = submitting ? "正在验证账号权益..." : "登录并同步权益";
+  }
+  if (cancel) cancel.disabled = submitting;
+  if (close) close.disabled = submitting;
+  $("accountRememberPassword").disabled = submitting;
+  $("accountAutoLogin").disabled = submitting || !$("accountRememberPassword")?.checked;
 }
 
 function setupEmbeddedAccountLogin() {
-  // 内部使用版：官网账号登录/注册UI已移除，无需绑定
+  const form = $("accountLoginForm");
+  const error = $("accountLoginError");
+  const showError = (message) => {
+    if (!error) return;
+    error.textContent = message || "登录失败，请稍后重试。";
+    error.classList.remove("success");
+    error.classList.remove("hidden");
+  };
+  const close = () => hideAccountLoginOverlay();
+
+  $("accountLoginCloseBtn")?.addEventListener("click", close);
+  $("accountLoginCancelBtn")?.addEventListener("click", close);
+  $("accountLoginBackdrop")?.addEventListener("click", close);
+  $("accountLoginPasswordToggle")?.addEventListener("click", () => {
+    setAccountPasswordVisibility($("accountLoginPassword")?.type === "password");
+    $("accountLoginPassword")?.focus();
+  });
+  $("accountRememberPassword")?.addEventListener("change", syncAccountLoginOptions);
+  $("accountAutoLogin")?.addEventListener("change", () => {
+    if ($("accountAutoLogin")?.checked) $("accountRememberPassword").checked = true;
+    syncAccountLoginOptions();
+  });
+  loadAccountLoginPreferences();
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = $("accountLoginEmail").value.trim();
+    const password = $("accountLoginPassword").value;
+    if (!email || !password) {
+      showError("请输入邮箱和密码。");
+      return;
+    }
+    error?.classList.add("hidden");
+    setAccountLoginSubmitting(true);
+    try {
+      const result = await window.gaobai.accountSubmitLogin({
+        email,
+        password,
+        rememberPassword: Boolean($("accountRememberPassword")?.checked),
+        autoLogin: Boolean($("accountAutoLogin")?.checked),
+      });
+      if (!result?.ok) {
+        showError(result?.message);
+        const help = $("accountLoginHelp");
+        const devices = $("accountLoginDevicesBtn");
+        const store = $("accountLoginStoreBtn");
+        devices?.classList.toggle("hidden", !result?.showDevices);
+        store?.classList.toggle("hidden", !result?.showStore);
+        help?.classList.toggle("hidden", !result?.showDevices && !result?.showStore);
+        return;
+      }
+      hideAccountLoginOverlay();
+      updateAccountUI(result.account);
+      if (result.account?.valid) {
+        updateLicenseUI(accountLicenseStatus(result.account));
+        $("activationRequiredModal")?.classList.add("hidden");
+      } else {
+        updateLicenseUI(accountLicenseStatus(result.account));
+      }
+    } catch (_) {
+      showError("登录服务暂时不可用，请稍后重试。");
+    } finally {
+      setAccountLoginSubmitting(false);
+    }
+  });
+  setupAccountAssist();
 }
 
 function setupAccountControls() {
-  // 内部使用版：官网账号/会员菜单已移除，无需绑定
+  const summary = $("accountSummaryBtn");
+  const menuToggle = $("accountMenuToggle");
+  const menu = $("accountMenu");
+  const setMenuOpen = (open) => {
+    menu?.classList.toggle("hidden", !open);
+    menuToggle?.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  summary?.addEventListener("click", async () => {
+    if (!state.account?.loggedIn) {
+      await beginAccountLogin();
+      return;
+    }
+    await window.gaobai.openAccountProfile();
+  });
+  menuToggle?.addEventListener("click", () => setMenuOpen(menu?.classList.contains("hidden")));
+  $("accountLoginBtn")?.addEventListener("click", beginAccountLogin);
+  $("accountProfileBtn")?.addEventListener("click", () => window.gaobai.openAccountProfile());
+  $("accountDevicesBtn")?.addEventListener("click", showAccountDevicesOverlay);
+  $("accountStoreBtn")?.addEventListener("click", () => window.gaobai.openAccountStore());
+  $("accountLoginDevicesBtn")?.addEventListener("click", async () => {
+    if (state.account?.loggedIn) await showAccountDevicesOverlay();
+    else await window.gaobai.openAccountProfile();
+  });
+  $("accountLoginStoreBtn")?.addEventListener("click", () => window.gaobai.openAccountStore());
+  $("accountDevicesCloseBtn")?.addEventListener("click", hideAccountDevicesOverlay);
+  $("accountDevicesBackdrop")?.addEventListener("click", hideAccountDevicesOverlay);
+  $("accountDevicesRefreshBtn")?.addEventListener("click", refreshAccountDevices);
+  $("accountLogoutBtn")?.addEventListener("click", async () => {
+    const result = await window.gaobai.accountLogout();
+    if (!result?.ok) {
+      $("accountMenuStatus").textContent = result?.message || "退出登录失败，请稍后重试。";
+      return;
+    }
+    const loggedOut = { loggedIn: false, valid: false, reason_code: "account_logged_out" };
+    updateAccountUI(loggedOut);
+    updateLicenseUI(accountLicenseStatus(loggedOut));
+    setMenuOpen(false);
+  });
+  window.gaobai.onAccountEvent?.((event) => {
+    if (!event) return;
+    if (event.type === "login-started") {
+      $("accountMenuStatus").textContent = "请在当前软件内输入账号和密码。";
+      return;
+    }
+    if (event.type === "status" || event.type === "session-status") {
+      updateAccountUI(event.account);
+      if (event.account?.loggedIn) hideAccountLoginOverlay();
+      updateLicenseUI(accountLicenseStatus(event.account));
+      if (event.account?.connection_status === "reconnecting") {
+        $("accountMenuStatus").textContent = "账号网络波动，正在后台重连...";
+      }
+      if (event.account?.valid) {
+        $("activationRequiredModal")?.classList.add("hidden");
+        if (event.type === "status") log("官网账号权益已同步，软件已解锁。");
+      } else if (event.type === "session-status" && event.account?.connection_status === "blocked") {
+        showActivationRequiredModal(accountLicenseStatus(event.account));
+      }
+    }
+  });
+  window.addEventListener("focus", () => {
+    refreshAccountStatus().catch(() => {});
+  });
 }
 
 function runStartupBackgroundTasks(localStatus) {
-  // 内部使用版：不注册官网账号，不做授权核对，不检查更新/公告
+  Promise.resolve()
+    .then(() => window.gaobai.registerApp())
+    .catch(() => log("软件注册请求失败，稍后轮询时会重试。"));
+
+  Promise.resolve()
+    .then(() => runStartupLicenseVerify(localStatus))
+    .catch(() => {});
+
+  Promise.resolve()
+    .then(() => checkForUpdatesAndAnnouncements())
+    .catch(() => {});
 }
 
 async function initLicense() {
-  // 内部使用版：授权恒为永久有效，不做任何联网核对或激活引导
-  updateLicenseUI({ ok: true, valid: true, is_permanent: true });
-  runStartupBackgroundTasks(null);
+  let localStatus = null;
+  try {
+    localStatus = await window.gaobai.licenseStatus();
+  } catch (_) {
+    localStatus = { valid: false, reason_code: "license_network_error" };
+  }
+
+  updateLicenseUI(localStatus?.valid ? { ...localStatus, verification_pending: true } : localStatus);
+  if (!localStatus?.valid) {
+    await showActivationRequiredModal(localStatus);
+  }
+
+  runStartupBackgroundTasks(localStatus);
   startPolling();
 }
 
@@ -3561,55 +4180,177 @@ const ACTIVATION_PROMPTS = {
 };
 
 async function showActivationRequiredModal(info) {
-  // 内部使用版：激活弹窗已移除
-  return;
+  const modal = $("activationRequiredModal");
+  if (!modal) return;
+  const reason = info?.reason_code || "account_not_logged_in";
+  const cfg = ACTIVATION_PROMPTS[reason] || ACTIVATION_PROMPTS.account_not_logged_in;
+
+  $("activationRequiredIcon").textContent = cfg.icon;
+  $("activationRequiredTitle").textContent = cfg.title;
+  $("activationRequiredMeta").textContent = cfg.meta;
+  $("activationRequiredReason").textContent =
+    info?.reason || "请登录官网账号并同步软件权益。";
+  // 卡片严重程度（critical = 红色）
+  $("activationRequiredCard").classList.toggle("severity-critical", cfg.severity === "critical");
+
+  // 设备信息块（仅 device_already_bound 时显示）
+  const deviceBlock = $("activationRequiredDeviceBlock");
+  if (cfg.showDeviceBlock) {
+    deviceBlock.classList.remove("hidden");
+    $("activationRequiredDeviceName").textContent = info?.device_name || "(未知设备)";
+    $("activationRequiredDeviceTime").textContent = info?.device_bound_at || "(未知时间)";
+  } else {
+    deviceBlock.classList.add("hidden");
+  }
+
+  // 微信块：只要有"联系管理员"按钮就显示
+  const showWechat = cfg.primary?.action === "contact" || cfg.secondary?.action === "contact";
+  $("activationRequiredWechat").classList.toggle("hidden", !showWechat);
+
+  // 按钮
+  const primary = $("activationRequiredPrimaryBtn");
+  const secondary = $("activationRequiredSecondaryBtn");
+  const setBtn = (btn, b) => {
+    if (!b) {
+      btn.classList.add("hidden");
+      btn.onclick = null;
+      return;
+    }
+    btn.classList.remove("hidden");
+    btn.textContent = b.text;
+    btn.classList.toggle("danger", b.action === "contact");
+    btn.onclick = () => handleActivationAction(b.action);
+  };
+  setBtn(primary, cfg.primary);
+  setBtn(secondary, cfg.secondary);
+
+  // 微信 ID 复制支持
+  const wechatEl = $("activationRequiredWechatId");
+  if (wechatEl) {
+    wechatEl.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(wechatEl.textContent.trim());
+        wechatEl.textContent = "✓ 已复制 GBJF_StudioHy";
+        setTimeout(() => (wechatEl.textContent = "GBJF_StudioHy"), 1500);
+      } catch (_) {}
+    };
+  }
+
+  modal.classList.remove("hidden");
+
+  function handleActivationAction(action) {
+    if (action === "accountLogin") {
+      modal.classList.add("hidden");
+      beginAccountLogin();
+    } else if (action === "store") {
+      modal.classList.add("hidden");
+      window.gaobai.openAccountStore();
+    } else if (action === "devices") {
+      modal.classList.add("hidden");
+      if (state.account?.loggedIn) showAccountDevicesOverlay();
+      else window.gaobai.openAccountProfile();
+    } else if (action === "contact") {
+      // 滚动到微信块（已经显示）
+      $("activationRequiredWechat")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      // 自动复制微信 ID
+      try {
+        navigator.clipboard.writeText("GBJF_StudioHy");
+      } catch (_) {}
+    } else if (action === "retry") {
+      // 重试启动核对
+      modal.classList.add("hidden");
+      initLicense();
+    }
+  }
+
+  // 用户按 ESC 关闭弹窗 → 允许继续试用部分功能
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      modal.classList.add("hidden");
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  document.addEventListener("keydown", onKey);
 }
 
 function openActivationModal() {
-  // 内部使用版：激活/账号引导已移除
-  return;
+  if (state.licenseReasonCode === "account_no_entitlement") {
+    window.gaobai.openAccountStore();
+    return;
+  }
+  beginAccountLogin();
 }
 
 function promptLicenseRequired(featureName = "当前功能") {
-  // 内部使用版：授权恒放行，无需账号/激活提示
-  return;
+  const noEntitlement = state.licenseReasonCode === "account_no_entitlement";
+  const message = noEntitlement
+    ? `${featureName}：当前账号暂无软件权益，正在打开官网商城。`
+    : `${featureName}${LICENSE_REQUIRED_MESSAGE}`;
+  log(message);
+  if (noEntitlement) {
+    window.gaobai.openAccountStore();
+    return;
+  }
+  beginAccountLogin();
 }
 
 function requireLicense(featureName) {
-  // 内部使用版：授权恒放行，不弹激活/账号提示
-  return true;
+  if (state.licenseValid) return true;
+  promptLicenseRequired(featureName);
+  return false;
 }
 
 function updateLicenseUI(status) {
-  // 内部使用版：授权恒为永久有效，直接显示"已解锁"，不再有激活/倒计时逻辑
-  state.licenseValid = true;
-  state.licenseReasonCode = "internal_permanent";
-  state.licenseExpiresAt = null;
-  state.licenseCountdown = "永久";
-  state.licenseExpiryCheckDoneFor = "";
+  const previousExpiresAt = state.licenseExpiresAt;
+  state.licenseValid = status.valid || false;
+  state.licenseReasonCode = status.reason_code || (status.valid ? "account_entitlement_valid" : "account_not_logged_in");
+  state.licenseExpiresAt = status.expires_at || null;
+  state.licenseCountdown = licenseCountdownText(status);
+  if (previousExpiresAt !== state.licenseExpiresAt) {
+    state.licenseExpiryCheckDoneFor = "";
+  }
 
   const lockedEl = $("licenseLockedEl");
   const activeEl = $("licenseActiveEl");
   const countdownEl = $("licenseCountdown");
+  const lockedText = $("licenseLockedText");
   const pillEl = $("statusPill");
   if (pillEl) {
-    pillEl.classList.add("licensed");
-    pillEl.title = "内部使用版 · 已解锁";
+    pillEl.classList.toggle("licensed", !!status.valid);
+    pillEl.title = status.valid ? "官网账号权益有效" : "登录官网账号同步软件权益";
   }
-  if (lockedEl) lockedEl.style.display = "none";
-  if (activeEl) activeEl.style.display = "";
-  if (countdownEl) {
-    countdownEl.textContent = "永久";
-    countdownEl.classList.remove("license-countdown-urgent");
+
+  if (status.valid) {
+    if (lockedEl) lockedEl.style.display = "none";
+    if (activeEl) activeEl.style.display = "";
+    if (countdownEl) {
+      countdownEl.textContent = status.verification_pending ? "后台校验中" : state.licenseCountdown;
+      countdownEl.classList.toggle("license-countdown-urgent", status.verification_pending ? false : status.countdown_urgent);
+    }
+  } else {
+    if (lockedEl) lockedEl.style.display = "";
+    if (activeEl) activeEl.style.display = "none";
+    if (lockedText) {
+      if (status.reason_code === "manual_review_required") lockedText.textContent = "人工审核中";
+      else if (status.reason_code === "license_disabled" || status.reason_code === "device_banned") lockedText.textContent = "已限制";
+      else if (["device_not_bound", "device_revoked", "rebind_required", "deactivated"].includes(status.reason_code)) lockedText.textContent = "需重新激活";
+      else lockedText.textContent = status.reason_code === "license_expired" ? "已过期" : "未激活";
+    }
+    const activePanel = document.querySelector(".content-page.active")?.id;
+    if (activePanel && activePanel !== "separationPage") goToPanel("separationPage");
   }
 
   if (!state.busy) {
-    $("startBtn").disabled = false;
+    const blocked = !state.licenseValid;
+    $("startBtn").disabled = blocked;
     $("loginBtn").disabled = false;
-    $("pickBtn").disabled = false;
+    $("pickBtn").disabled = blocked;
   }
   updateBatchQueueControls();
   stopLicenseTimer();
+  if (state.licenseValid && state.licenseExpiresAt) {
+    startLicenseTimer(status);
+  }
 }
 
 function parseLicenseExpiryMs(expiresAt) {
@@ -3634,18 +4375,91 @@ function licenseCountdownText(status = {}) {
 }
 
 async function lockAppForExpiredLicense(status) {
-  // 内部使用版：授权永久有效，永不锁定
-  return;
+  try {
+    if (state.busy && typeof window.gaobai?.stopJob === "function") {
+      await window.gaobai.stopJob();
+    }
+  } catch (_) {}
+
+  if (state.busy) setBusy(false);
+  updateLicenseUI(status);
+  log("授权已到期，已暂停当前任务。");
+  await showActivationRequiredModal(status);
 }
 
 async function verifyLicenseExpiryNow(reason = "expiry_window") {
-  // 内部使用版：授权永久有效，无需到期核对
-  return;
+  if (state.licenseExpiryCheckInFlight) return;
+  state.licenseExpiryCheckInFlight = true;
+  try {
+    const online = await window.gaobai.checkLicense();
+    if (online?.valid) {
+      state.licenseExpiryCheckDoneFor = online.expires_at || state.licenseExpiresAt || "";
+      updateLicenseUI(online);
+      return;
+    }
+
+    if (shouldLockFromOnlineLicense(online)) {
+      const status = online || {
+        valid: false,
+        reason_code: "license_expired",
+        reason: "授权已过期",
+      };
+      await lockAppForExpiredLicense(status);
+      return;
+    }
+
+    log("授权到期在线核对暂时失败，15秒后重试。");
+    stopLicenseTimer();
+    state.licenseTimer = setTimeout(() => verifyLicenseExpiryNow("expiry_retry"), 15000);
+  } catch (_) {
+    try {
+      const local = await window.gaobai.licenseStatus();
+      if (!local?.valid && local?.reason_code === "license_expired") {
+        await lockAppForExpiredLicense(local);
+        return;
+      }
+    } catch (_) {}
+    log("授权到期在线核对暂时失败，15秒后重试。");
+    stopLicenseTimer();
+    state.licenseTimer = setTimeout(() => verifyLicenseExpiryNow("expiry_retry"), 15000);
+  } finally {
+    state.licenseExpiryCheckInFlight = false;
+  }
 }
 
 function startLicenseTimer(status = {}) {
-  // 内部使用版：授权永久有效，无需到期计时
   stopLicenseTimer();
+
+  const expiryMs = parseLicenseExpiryMs(status.expires_at || state.licenseExpiresAt);
+  if (!expiryMs) return;
+
+  const msUntilExpiry = expiryMs - Date.now();
+  let delayMs = 60000;
+  let shouldOnlineVerify = false;
+
+  if (msUntilExpiry <= 0) {
+    delayMs = 0;
+    shouldOnlineVerify = true;
+  } else if (msUntilExpiry <= 1000) {
+    delayMs = state.licenseExpiryCheckDoneFor === (status.expires_at || state.licenseExpiresAt) ? 2000 : 0;
+    shouldOnlineVerify = true;
+  } else if (msUntilExpiry <= 61000) {
+    delayMs = Math.max(0, msUntilExpiry - 1000);
+    shouldOnlineVerify = true;
+  } else {
+    delayMs = Math.min(60000, msUntilExpiry - 1000);
+  }
+
+  state.licenseTimer = setTimeout(async () => {
+    try {
+      if (shouldOnlineVerify) {
+        await verifyLicenseExpiryNow("expiry_window");
+      } else {
+        const result = await window.gaobai.licenseStatus();
+        updateLicenseUI(result);
+      }
+    } catch (_) {}
+  }, delayMs);
 }
 
 function stopLicenseTimer() {
@@ -3658,7 +4472,6 @@ function stopLicenseTimer() {
 // ── 导航 ──
 
 function setupNavigation() {
-  // 已收敛为核心三入口；未授权时停留在当前并提示，不再强制跳到空壳分离页
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => {
       const panel = button.dataset.panel;
@@ -3770,7 +4583,7 @@ function setupUploadBatchControls() {
     if (batchQueueIsActive() || !requireLicense("添加批量上传歌曲")) return;
     const files = Array.from(event.dataTransfer?.files || [])
       .filter((file) => OPEN_AUDIO_PATTERN.test(file.name || ""))
-      .map((file) => window.getPathForFile(file))
+      .map((file) => file.path)
       .filter(Boolean);
     await addFilesToBatchQueue(files);
   });
@@ -3781,16 +4594,24 @@ function setupUploadBatchControls() {
       log("请先添加要批量上传的歌曲。");
       return;
     }
+    const requestId=(state.uploadRequestId || 0)+1;
+    state.uploadRequestId=requestId;
     setBusy(true);
     setUploadType("batch");
     setStatus("正在启动批量队列", "队列准备中");
     setUploadEtaBadge("批量队列准备中", `${state.batchQueue.items.length} 首歌曲`);
     const continuing = ["paused", "waiting_login"].includes(state.batchQueue.status);
-    const result = continuing
+    let result;
+    try {result = continuing
       ? await window.gaobai.resumeUploadBatch()
-      : await window.gaobai.startUploadBatch({ items: state.batchQueue.items });
+      : await window.gaobai.startUploadBatch({ items: state.batchQueue.items });}
+    catch(error){result={ok:false,message:error.message || '批量队列启动失败，请重试。'};}
+    if(state.uploadRequestId!==requestId)return;
     if (!result?.ok) {
       setBusy(false);
+      if(result?.code==='upload_cancelled') {
+        stopUploadEtaCountdown();setStatus('已停止','已停止');setUploadEtaBadge('已停止','队列取消');return;
+      }
       if (result?.code === "suno_login_required") {
         restoreSunoLoginUi(result.message || "Suno 登录已失效，请重新登录后继续批量队列。");
       } else {
@@ -3805,19 +4626,25 @@ function setupUploadBatchControls() {
   });
 
   $("batchPauseBtn")?.addEventListener("click", async () => {
+    const requestId=(state.uploadRequestId || 0)+1;
+    state.uploadRequestId=requestId;
     const result = await window.gaobai.pauseUploadBatch();
+    if(state.uploadRequestId!==requestId)return;
     if (!result?.ok) {
       log(result?.message || "暂停批量队列失败。");
       return;
     }
     state.batchQueue = normalizeBatchQueue(result.queue);
     renderBatchQueue();
-    setStatus("当前歌曲完成后暂停", "等待暂停");
+    setStatus(result.queue?.status==='paused'?'队列已暂停':'当前歌曲完成后暂停',result.queue?.status==='paused'?'已暂停':'等待暂停');
   });
 
   $("batchCancelBtn")?.addEventListener("click", async () => {
     if (!window.confirm("确定停止整个批量上传队列吗？正在上传的歌曲也会停止。")) return;
+    const requestId=(state.uploadRequestId || 0)+1;
+    state.uploadRequestId=requestId;
     const result = await window.gaobai.cancelUploadBatch();
+    if(state.uploadRequestId!==requestId)return;
     if (!result?.ok) {
       log(result?.message || "停止批量队列失败。");
       return;
@@ -4190,7 +5017,7 @@ function formatDawBars(time) {
 function syncDawRulerWithGrid() {
   state.dawRulerMode = state.editorGrid?.unit === "time" ? "time" : "bars";
   if ($("dawRulerMode")) $("dawRulerMode").value = state.dawRulerMode;
-  localStorage.setItem("qiyin-daw-ruler", state.dawRulerMode);
+  localStorage.setItem("jfmhstudio-daw-ruler", state.dawRulerMode);
 }
 
 function dawTimelineGrid(pps) {
@@ -5171,8 +5998,8 @@ function setupMiniDaw() {
   ensureDawTracks();
   syncDawRulerWithGrid();
   updateDawToolHint();
-  const storedExportFormat = localStorage.getItem("qiyin-daw-export-format");
-  const storedSampleRate = Number(localStorage.getItem("qiyin-daw-export-sample-rate"));
+  const storedExportFormat = localStorage.getItem("jfmhstudio-daw-export-format");
+  const storedSampleRate = Number(localStorage.getItem("jfmhstudio-daw-export-sample-rate"));
   if ($("dawExportFormat")) $("dawExportFormat").value = storedExportFormat === "mp3" ? "mp3" : "wav";
   if ($("dawExportSampleRate")) $("dawExportSampleRate").value = storedSampleRate === 48000 ? "48000" : "44100";
   renderDawProject();
@@ -5227,8 +6054,8 @@ function setupMiniDaw() {
       $("dawExportName")?.focus();
       return;
     }
-    localStorage.setItem("qiyin-daw-export-format", $("dawExportFormat")?.value === "mp3" ? "mp3" : "wav");
-    localStorage.setItem("qiyin-daw-export-sample-rate", Number($("dawExportSampleRate")?.value) === 48000 ? "48000" : "44100");
+    localStorage.setItem("jfmhstudio-daw-export-format", $("dawExportFormat")?.value === "mp3" ? "mp3" : "wav");
+    localStorage.setItem("jfmhstudio-daw-export-sample-rate", Number($("dawExportSampleRate")?.value) === 48000 ? "48000" : "44100");
     const action = state.dawExportDialogAction;
     closeDawExportDialog();
     if (action) renderDawSong(action);
@@ -5275,7 +6102,7 @@ function setupMiniDaw() {
     if (state.dawRulerMode === "time") state.editorGrid.unit = "time";
     else if (state.editorGrid.unit === "time") state.editorGrid.unit = "beat";
     if ($("editorGridUnit")) $("editorGridUnit").value = state.editorGrid.unit;
-    localStorage.setItem("qiyin-daw-ruler", state.dawRulerMode);
+    localStorage.setItem("jfmhstudio-daw-ruler", state.dawRulerMode);
     saveEditorPrefs();
     renderDawProject();
   });
@@ -5757,7 +6584,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupTimelineDrag();
   setupMiniDaw();
   // 检查更新 / 公告移到 initLicense 内（启动时检查授权后调用）
-  log("欢迎使用期音科技 · Suno 歌曲上传器。");
+  log("欢迎使用悸风喵核 Studio · Jifeng MeowCore Studio。");
   refreshHistory();
   refreshSeparationModels();
   refreshSeparationDevices();
@@ -5816,14 +6643,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!requireLicense("拖入上传音频")) return;
       const files = Array.from(e.dataTransfer?.files || []);
       const audioFile = files.find(f => OPEN_AUDIO_PATTERN.test(f.name));
-      if (audioFile) {
-        const ap = window.getPathForFile(audioFile);
-        if (ap) {
-          setCurrentAudio(ap);
-          log(`已拖入音频：${basename(ap)}`);
-        } else {
-          log("请拖入 mp3、wav、m4a、flac、ogg、ape、wma 等开放音频文件");
-        }
+      if (audioFile && audioFile.path) {
+        setCurrentAudio(audioFile.path);
+        log(`已拖入音频：${basename(audioFile.path)}`);
+      } else {
+        log("请拖入 mp3、wav、m4a、flac、ogg、ape、wma 等开放音频文件");
       }
     });
   }
@@ -5839,18 +6663,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!requireLicense("音频剪辑")) return;
       const files = Array.from(e.dataTransfer?.files || []);
       const audioFile = files.find(f => OPEN_AUDIO_PATTERN.test(f.name));
-      if (!audioFile) {
-        log("请拖入 mp3、wav、m4a、flac、ogg、ape、wma 等开放音频文件到剪辑区");
-        return;
-      }
-      const ap = window.getPathForFile(audioFile);
-      if (!ap) {
+      if (!audioFile || !audioFile.path) {
         log("请拖入 mp3、wav、m4a、flac、ogg、ape、wma 等开放音频文件到剪辑区");
         return;
       }
       try {
-        await loadEditorAudio(ap);
-        log(`剪辑区已载入：${basename(ap)}`);
+        await loadEditorAudio(audioFile.path);
+        log(`剪辑区已载入：${basename(audioFile.path)}`);
       } catch (error) {
         log(`音频读取失败：${error.message}`);
       }
@@ -5902,6 +6721,8 @@ document.addEventListener("DOMContentLoaded", () => {
       log("请先选择音频文件。");
       return;
     }
+    const requestId=(state.uploadRequestId || 0)+1;
+    state.uploadRequestId=requestId;
     setBusy(true);
     resetUploadEta();
     resetUploadMetrics();
@@ -5912,14 +6733,38 @@ document.addEventListener("DOMContentLoaded", () => {
     setUploadEtaBadge("预计完成 --:--", "剩余计算中");
     setProgress(3);
     setStatus("准备上传", "上传中");
-    const result = await window.gaobai.startUpload({
-      ...window.sunoAccountBinding?.(),
-      audioPath: state.audioPath,
-      title: $("titleInput").value.trim(),
-      speed: state.speed,
-      resumePolicy
-    });
+    let result;
+    try {
+      result = await window.gaobai.startUpload({
+        ...window.sunoAccountBinding?.(),
+        audioPath: state.audioPath,
+        title: $("titleInput").value.trim(),
+        speed: state.speed,
+        resumePolicy
+      });
+      if(state.uploadRequestId!==requestId)return;
+      if (!result) throw new Error("上传服务没有返回启动结果");
+    } catch (error) {
+      if(state.uploadRequestId!==requestId)return;
+      setBusy(false);
+      stopUploadEtaCountdown();
+      setStatus("上传启动失败", "未开始上传", "error");
+      setUploadEtaBadge("启动失败", "请重试", "error");
+      setUploadNotice("上传进程未能启动，请重试；若仍失败，请提供 app.log。", "error");
+      log(`上传启动失败：${error.message || error}`);
+      return;
+    }
     if (!result.ok) {
+      if(result.code==='upload_cancelled') {
+        setBusy(false);stopUploadEtaCountdown();setStatus('已停止','已停止');
+        setUploadNotice('已停止上传准备。','warn');return;
+      }
+      if(['suno_network_error','suno_browser_required','suno_extension_required'].includes(result.code)) {
+        setBusy(false);stopUploadEtaCountdown();setStatus('Suno 连接待恢复','未开始上传','error');
+        setUploadEtaBadge('等待恢复连接','登录资料已保留','error');
+        setUploadNotice(result.message || '请检查网络及原账号的 Suno 网页后重试。','warn');
+        log(result.message || 'Suno 连接暂不可用');return;
+      }
       if (result.code === "resume_decision_required" && result.candidate) {
         const candidate = result.candidate;
         setBusy(false);
@@ -5949,8 +6794,13 @@ document.addEventListener("DOMContentLoaded", () => {
   $("startBtn").addEventListener("click", () => startSunoUpload());
 
   $("stopBtn").addEventListener("click", async () => {
+    const requestId=(state.uploadRequestId || 0)+1;
+    state.uploadRequestId=requestId;
     await window.gaobai.stopJob();
+    if(state.uploadRequestId!==requestId)return;
     setBusy(false);
+    stopUploadEtaCountdown();
+    setUploadEtaBadge('已停止','任务取消');
     setStatus("已停止", "已停止");
     log("已请求停止当前任务。");
   });
@@ -7237,16 +8087,11 @@ document.addEventListener("DOMContentLoaded", () => {
       separationDrop.classList.remove("dragover");
       const files = Array.from(e.dataTransfer?.files || []);
       const audioFile = files.find(f => OPEN_AUDIO_PATTERN.test(f.name));
-      if (audioFile) {
-        const ap = window.getPathForFile(audioFile);
-        if (ap) {
-          state.separationAudioPath = ap;
-          $("separationAudioName").textContent = basename(ap);
-          $("separationAudioPath").textContent = ap;
-          log(`分离区已载入：${basename(ap)}`);
-        } else {
-          log("请拖入 mp3、wav、m4a、flac、ogg、ape、wma 等开放音频文件到分离区");
-        }
+      if (audioFile && audioFile.path) {
+        state.separationAudioPath = audioFile.path;
+        $("separationAudioName").textContent = basename(audioFile.path);
+        $("separationAudioPath").textContent = audioFile.path;
+        log(`分离区已载入：${basename(audioFile.path)}`);
       } else {
         log("请拖入 mp3、wav、m4a、flac 等音频文件");
       }
@@ -7783,7 +8628,7 @@ function unlockerInit() {
       const dirPaths = [];
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        const p = window.getPathForFile(f) || (f.name && items[i] && items[i].webkitGetAsEntry && items[i].webkitGetAsEntry().isFile ? "" : "");
+        const p = f.path || (f.name && items[i] && items[i].webkitGetAsEntry && items[i].webkitGetAsEntry().isFile ? "" : "");
         if (p) filePaths.push(p);
       }
       // 目录识别:遍历 items,找 isDirectory 的 entry
@@ -7796,7 +8641,7 @@ function unlockerInit() {
           // Electron 中,directory entry 没有 path,我们用同名 file 的 path(可能为空)
           // 退而求其次:用 items[i].getAsFile().path(Electron 31 通常会有)
           const dummyFile = items[i].getAsFile && items[i].getAsFile();
-          const dp = dummyFile && window.getPathForFile(dummyFile);
+          const dp = dummyFile && dummyFile.path;
           if (dp) dirPaths.push(dp);
         }
       }

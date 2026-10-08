@@ -19,8 +19,8 @@ function normalizeSunoUrl(value) {
 }
 
 class SunoDownloadController {
-  constructor({ dataDir, defaultOutputDir, executable, ffmpeg, env, authorize, onState, spawnProcess = spawn }) {
-    Object.assign(this, { dataDir, executable, ffmpeg, env, authorize, onState, spawnProcess });
+  constructor({ dataDir, defaultOutputDir, executable, ffmpeg, env, authorize, createTaskAuthorization, onState, spawnProcess = spawn }) {
+    Object.assign(this, { dataDir, executable, ffmpeg, env, authorize, createTaskAuthorization, onState, spawnProcess });
     this.active = null;
     this.closed = false;
     this.outputDirectory = defaultOutputDir;
@@ -63,7 +63,7 @@ class SunoDownloadController {
     payload = payload || {};
     const url = normalizeSunoUrl(payload.url);
     if (!url) return this.reject("请粘贴有效的 Suno 歌曲链接。", "INVALID_URL");
-    if (!["mp3", "wav", "m4a"].includes(payload.format)) return this.reject("请选择 MP3、WAV 或原始源。", "INVALID_FORMAT");
+    if (!["mp3", "wav"].includes(payload.format)) return this.reject("请选择 MP3 或 WAV。", "INVALID_FORMAT");
     const task = { id: crypto.randomUUID(), child: null, cancelled: false, terminal: null, settled: false };
     task.done = new Promise((resolve) => { task.resolve = resolve; });
     // Reserve before awaiting authorization so double clicks cannot start two children.
@@ -76,6 +76,8 @@ class SunoDownloadController {
       const license = await this.authorize();
       if (task.cancelled || this.closed) return this.finish(task, this.cancelledState());
       if (!license?.ok) return this.finish(task, { ...license, status: "failed", phase: "failed", running: false });
+      if (this.createTaskAuthorization) task.authorization = await this.createTaskAuthorization();
+      if (task.cancelled || this.closed) return this.finish(task, this.cancelledState());
       fs.mkdirSync(this.outputDirectory, { recursive: true });
       task.workRoot = path.join(this.dataDir, "suno-download", task.id);
       fs.mkdirSync(task.workRoot, { recursive: true });
@@ -85,7 +87,7 @@ class SunoDownloadController {
         "--output-dir", this.outputDirectory, "--work-root", task.workRoot,
         "--cancel-file", task.cancelFile, "--ffmpeg", this.ffmpeg()];
       task.child = this.spawnProcess(exe.command, args, {
-        windowsHide: true, shell: false, env: this.env(), stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true, shell: false, env: { ...this.env(), ...(task.authorization?.env || {}) }, stdio: ["ignore", "pipe", "pipe"],
       });
       let pending = "";
       const acceptLine = (line) => {
@@ -115,8 +117,9 @@ class SunoDownloadController {
           : task.cancelled ? this.cancelledState() : this.failedState("下载组件意外退出，请重试。"));
       });
       return this.snapshot();
-    } catch {
-      return this.finish(task, task.cancelled ? this.cancelledState() : this.failedState("下载未能启动，请检查保存位置后重试。"));
+    } catch (error) {
+      return this.finish(task, task.cancelled ? this.cancelledState() : this.failedState(error?.code?.startsWith("task_") || error?.code === "account_not_logged_in" || error?.code === "session_changed"
+        ? error.message : "下载未能启动，请检查保存位置后重试。"));
     }
   }
 
@@ -126,6 +129,7 @@ class SunoDownloadController {
   finish(task, terminal) {
     if (task.settled) return this.snapshot();
     task.settled = true;
+    void task.authorization?.close();
     clearTimeout(task.killTimer);
     if (task.cancelFile) { try { fs.unlinkSync(task.cancelFile); } catch {} }
     if (task.workRoot) { try { fs.rmdirSync(task.workRoot); } catch {} } // Only remove an empty, owned job directory.
@@ -168,10 +172,10 @@ class SunoDownloadController {
   }
 }
 
-function installSunoDownload({ app, ipcMain, dialog, shell, getWindow, executable, ffmpeg, env, authorize }) {
+function installSunoDownload({ app, ipcMain, dialog, shell, getWindow, executable, ffmpeg, env, authorize, createTaskAuthorization }) {
   const {SunoDownloadBatch} = require("./suno-download-batch");
   const controller = new SunoDownloadBatch({
-    dataDir: app.getPath("userData"), defaultOutputDir: app.getPath("downloads"), executable, ffmpeg, env, authorize,
+    dataDir: app.getPath("userData"), defaultOutputDir: app.getPath("downloads"), executable, ffmpeg, env, authorize, createTaskAuthorization,
     onState: (state) => {
       const window = getWindow();
       if (window && !window.isDestroyed()) window.webContents.send("suno-download:event", state);

@@ -1,0 +1,10 @@
+{
+  "version": "5.0.4",
+  "workers": {
+    "audio_editor.exe": "430587e8792dd11c2eb388135a36e1be813b71f19f859350de819a4ec42091bb",
+    "backend.exe": "eaa94f7e750b5049d406fa51d01922a2104af59a82b133583e7975edaeb36251",
+    "kugou_unlocker.exe": "8b5d9ee9b03c0dc8f7957b828726b5c9d40dacab408db8e2fd247be6531c313c",
+    "qqmusic_frida_unlocker.exe": "86b0507c3a7c362836be91ec48c48e09f78dbb354911ce417c35e2b5db6f174f",
+    "suno_download_cli.exe": "98a43414bc1bf8bbfeef46d3c4b4d83fdcfb2b26d83f554d6394c8907d84bfd5"
+  }
+}

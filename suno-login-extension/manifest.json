@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "期音科技 Suno 登录助手",
-  "version": "5.0.0",
+  "name": "告白悸风 Suno 登录助手",
+  "version": "5.0.4",
+  "minimum_chrome_version": "120",
   "description": "在用户确认配对后，将当前 Suno 登录状态连接到本机 Studio。",
   "permissions": [
     "activeTab",
     "scripting",
-    "cookies"
+    "cookies",
+    "storage",
+    "alarms"
   ],
   "host_permissions": [
     "https://suno.com/*",

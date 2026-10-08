@@ -2,31 +2,27 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-src 'none'" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>期音科技 · Suno 歌曲上传器</title>
+    <title>悸风喵核 Studio - Jifeng MeowCore Studio</title>
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./suno-download.css" />
   </head>
   <body>
-    <svg style="display:none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.9A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.24"></path><path d="M12 12v9"></path><path d="m8 17 4-4 4 4"></path></symbol>
-      <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.9A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.24"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></symbol>
-      <symbol id="i-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></symbol>
-      <symbol id="i-music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></symbol>
-    </svg>
     <main class="app-shell">
       <header class="titlebar">
         <div class="brand-block drag-region">
-          <div class="brand-mark" aria-hidden="true">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3" fill="#fff" stroke="none"></circle><circle cx="18" cy="16" r="3" fill="#fff" stroke="none"></circle></svg>
-          </div>
+          <img src="../../assets/logo.png" alt="悸风喵核 Studio" class="brand-logo" />
           <div class="brand-copy">
-            <h1>期音科技</h1><span class="dot">·</span><span class="sub">Suno 歌曲上传器</span>
+            <h1>悸风喵核 Studio</h1>
+            <p>Jifeng MeowCore Studio · 音频处理转码与Suno上传综合音频软件 V5.0.4</p>
           </div>
         </div>
         <div class="ready-pill drag-region" id="statusPill">
-          <span id="licenseActiveEl" class="license-active"><span class="ready-dot"></span>内部使用版 · 已解锁</span>
+          <span id="licenseLockedEl" class="license-locked">🔒 <span id="licenseLockedText">未激活</span> · <button class="license-activate-btn" id="openActivationBtn">登录官网账号</button></span>
+          <span id="licenseActiveEl" class="license-active" style="display:none"><span class="ready-dot"></span>准备就绪 · 剩余 <strong id="licenseCountdown">永久</strong></span>
           <span id="taskPill" class="task-pill hidden"></span>
+          <span class="paw-mark">paw</span>
         </div>
         <div class="window-tools">
           <button class="round-tool" type="button" title="帮助">?</button>
@@ -34,7 +30,7 @@
           <div class="theme-popover hidden" id="themePopover" role="dialog" aria-label="显示与窗口设置">
             <div class="theme-popover-heading">
               <strong>显示主题</strong>
-              <small>浅色 / 深色</small>
+              <small>同步官网配色</small>
             </div>
             <div class="theme-choice-group" role="radiogroup" aria-label="显示主题">
               <button class="theme-choice" type="button" data-theme-choice="light" role="radio" aria-checked="true">
@@ -82,29 +78,42 @@
 
       <section class="main-layout">
         <aside class="sidebar">
-          <nav class="nav" aria-label="主导航">
-            <button class="nav-item active" type="button" data-panel="uploadPage">
-              <span class="nav-icon"><svg><use href="#i-upload"></use></svg></span>
-              <span><strong>Suno 歌曲上传</strong><small>上传 · 拼接 · 歌词</small></span>
-            </button>
-            <button class="nav-item" type="button" data-panel="downloadPage">
-              <span class="nav-icon"><svg><use href="#i-download"></use></svg></span>
-              <span><strong>Suno 歌曲下载</strong><small>MP3 / WAV 下载</small></span>
-            </button>
-            <button class="nav-item" type="button" data-panel="historyPage">
-              <span class="nav-icon"><svg><use href="#i-history"></use></svg></span>
-              <span><strong>上传历史</strong><small>记录 · 管理</small></span>
-            </button>
-          </nav>
-          <div class="sidebar-account" id="accountPanel" aria-label="期音科技账号">
-            <div class="account-head">
-              <div class="avatar guest" id="accountAvatar">内</div>
-              <div class="t"><strong id="accountName">请勿传播</strong><small id="accountMeta">仅内部使用</small></div>
-            </div>
-          </div>
+          <button class="nav-item active" type="button" data-panel="uploadPage">
+            <span class="nav-icon upload">1</span>
+            <span><strong>Suno歌曲上传</strong><small>一键上传 & 拼接</small></span>
+          </button>
+          <button class="nav-item" type="button" data-panel="downloadPage">
+            <span class="nav-icon upload">2</span>
+            <span><strong>Suno歌曲下载</strong><small>MP3 / WAV 下载</small></span>
+          </button>
+          <button class="nav-item" type="button" data-panel="historyPage">
+            <span class="nav-icon history">3</span>
+            <span><strong>上传历史</strong><small>记录 & 管理</small></span>
+          </button>
           <div class="sidebar-cat-wrap">
-            <p class="sidebar-cat-help">内部使用版 · 免登录即用</p>
+            <img class="sidebar-cat-image" src="../../assets/sidebar-cat.png" alt="Jifeng MeowCore Studio" />
+            <p class="sidebar-cat-help">如遇问题微信联系：<span class="wechat-id">GBJF_StudioHy</span></p>
           </div>
+          <section class="sidebar-account" id="accountPanel" aria-label="告白悸风账号">
+            <div class="account-summary">
+              <button class="account-profile-summary" id="accountSummaryBtn" type="button">
+                <span class="account-avatar" id="accountAvatar">GB</span>
+                <span class="account-copy">
+                  <strong id="accountName">登录告白悸风账号</strong>
+                  <small id="accountMeta">同步会员与软件权益</small>
+                </span>
+              </button>
+              <button class="account-menu-toggle" id="accountMenuToggle" type="button" aria-label="账号菜单" aria-expanded="false">•••</button>
+            </div>
+            <div class="account-menu hidden" id="accountMenu">
+              <p class="account-menu-status" id="accountMenuStatus">登录后自动验证官网权益</p>
+              <button class="account-menu-action primary" id="accountLoginBtn" type="button">登录官网账号</button>
+              <button class="account-menu-action" id="accountProfileBtn" type="button" style="display:none">个人中心</button>
+              <button class="account-menu-action" id="accountDevicesBtn" type="button" style="display:none">设备管理</button>
+              <button class="account-menu-action" id="accountStoreBtn" type="button">商城购买</button>
+              <button class="account-menu-action danger" id="accountLogoutBtn" type="button" style="display:none">退出登录</button>
+            </div>
+          </section>
         </aside>
 
         <section class="content-stage">
@@ -124,7 +133,6 @@
                   <legend class="field-label">保存格式</legend>
                   <label class="download-format"><input type="radio" name="sunoDownloadFormat" value="mp3" checked /><span><strong>MP3</strong><small>192 kbps · 文件更小</small></span></label>
                   <label class="download-format"><input type="radio" name="sunoDownloadFormat" value="wav" /><span><strong>WAV</strong><small>48 kHz · 24 bit</small></span></label>
-                  <label class="download-format"><input type="radio" name="sunoDownloadFormat" value="m4a" /><span><strong>原始源 (m4a)</strong><small>保留 Suno Opus 编码 · 音质更好</small></span></label>
                 </fieldset>
                 <div class="download-directory">
                   <div><span class="field-label">保存位置</span><p id="sunoDownloadDirectory">正在读取…</p></div>
@@ -599,7 +607,183 @@
           </section>
         </section>
       </section>
+
+      <section class="account-login-overlay hidden" id="accountLoginOverlay" role="dialog" aria-modal="true" aria-labelledby="accountLoginTitle">
+        <div class="account-login-backdrop" id="accountLoginBackdrop"></div>
+        <form class="account-login-card" id="accountLoginForm" novalidate>
+          <header class="account-login-head">
+            <div class="account-login-brand">
+              <img src="../../assets/logo.png" alt="悸风喵核 Studio" />
+              <div>
+                <p>JIFENG MEOWCORE STUDIO</p>
+                <h2 id="accountLoginTitle">登录告白悸风账号</h2>
+              </div>
+            </div>
+            <button class="account-login-close" id="accountLoginCloseBtn" type="button" aria-label="关闭">&#215;</button>
+          </header>
+          <p class="account-login-intro">登录后自动同步会员与软件权益。</p>
+          <label class="account-login-field" for="accountLoginEmail">
+            <span>登录邮箱</span>
+            <input id="accountLoginEmail" type="email" autocomplete="username" placeholder="name@example.com" required />
+          </label>
+          <label class="account-login-field" for="accountLoginPassword">
+            <span class="account-field-heading"><span>密码</span><button class="account-text-button" id="accountForgotPasswordBtn" type="button">忘记密码？</button></span>
+            <span class="account-password-wrap">
+              <input id="accountLoginPassword" type="password" autocomplete="current-password" placeholder="请输入密码" required />
+              <button class="account-password-toggle" id="accountLoginPasswordToggle" type="button" aria-label="显示密码" aria-pressed="false" title="显示密码">
+                <svg class="account-password-eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                <svg class="account-password-eye-off hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18"></path><path d="M10.6 6.2A11.6 11.6 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-2.1 2.8"></path><path d="M6.3 6.3C3.5 8.1 2 12 2 12s3.5 6 10 6c1.7 0 3.1-.4 4.3-1"></path><path d="M10.1 10.1A3 3 0 0 0 14 14"></path></svg>
+              </button>
+            </span>
+          </label>
+          <div class="account-login-options" aria-label="登录选项">
+            <label class="account-check-option" for="accountRememberPassword"><input id="accountRememberPassword" type="checkbox" /><span>记住密码</span></label>
+            <label class="account-check-option" id="accountAutoLoginOption" for="accountAutoLogin"><input id="accountAutoLogin" type="checkbox" /><span>自动登录</span></label>
+          </div>
+          <p class="account-login-error hidden" id="accountLoginError" role="alert"></p>
+          <div class="account-login-actions">
+            <button class="start-button" id="accountLoginSubmitBtn" type="submit">登录并同步权益</button>
+            <button class="mini-button soft" id="accountLoginCancelBtn" type="button">取消</button>
+          </div>
+          <div class="account-login-help hidden" id="accountLoginHelp">
+            <button class="mini-button soft hidden" id="accountLoginDevicesBtn" type="button">管理已绑定设备</button>
+            <button class="mini-button soft hidden" id="accountLoginStoreBtn" type="button">前往商城购买</button>
+          </div>
+          <p class="account-login-switch">还没有账号？<button class="account-text-button" id="accountRegisterBtn" type="button">免费注册</button></p>
+          <p class="account-login-note">勾选后将使用系统加密保护登录信息。</p>
+        </form>
+      </section>
+
+      <section class="account-login-overlay hidden" id="accountAssistOverlay" role="dialog" aria-modal="true" aria-labelledby="accountAssistTitle">
+        <div class="account-login-backdrop" id="accountAssistBackdrop"></div>
+        <form class="account-login-card account-assist-card" id="accountAssistForm" novalidate>
+          <header class="account-login-head">
+            <div class="account-login-brand">
+              <img src="../../assets/logo.png" alt="悸风喵核 Studio" />
+              <div>
+                <p id="accountAssistEyebrow">CREATE ACCOUNT</p>
+                <h2 id="accountAssistTitle">免费注册</h2>
+              </div>
+            </div>
+            <button class="account-login-close" id="accountAssistCloseBtn" type="button" aria-label="关闭">&#215;</button>
+          </header>
+          <p class="account-login-intro" id="accountAssistIntro">注册后即可购买会员并在软件中同步权益。</p>
+          <label class="account-login-field" id="accountAssistNameField" for="accountAssistName">
+            <span>昵称</span>
+            <input id="accountAssistName" type="text" autocomplete="nickname" maxlength="30" placeholder="请输入昵称" />
+          </label>
+          <label class="account-login-field" for="accountAssistEmail">
+            <span>邮箱</span>
+            <input id="accountAssistEmail" type="email" autocomplete="email" placeholder="name@example.com" required />
+          </label>
+          <label class="account-login-field" for="accountAssistCode">
+            <span>邮箱验证码</span>
+            <span class="account-code-row">
+              <input id="accountAssistCode" type="text" autocomplete="one-time-code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" required />
+              <button class="mini-button soft account-code-button" id="accountAssistSendCodeBtn" type="button">获取验证码</button>
+            </span>
+          </label>
+          <label class="account-login-field" for="accountAssistPassword">
+            <span id="accountAssistPasswordLabel">密码</span>
+            <input id="accountAssistPassword" type="password" autocomplete="new-password" minlength="8" placeholder="至少 8 位，包含字母和数字" required />
+          </label>
+          <label class="account-login-field" for="accountAssistPasswordConfirmation">
+            <span id="accountAssistConfirmationLabel">确认密码</span>
+            <input id="accountAssistPasswordConfirmation" type="password" autocomplete="new-password" minlength="8" placeholder="请再次输入密码" required />
+          </label>
+          <p class="account-login-error hidden" id="accountAssistError" role="alert"></p>
+          <div class="account-login-actions">
+            <button class="start-button" id="accountAssistSubmitBtn" type="submit">创建账号</button>
+            <button class="mini-button soft" id="accountAssistBackBtn" type="button">返回登录</button>
+          </div>
+          <p class="account-login-note">验证码和密码只会发送到官网账号服务，软件不会保存密码。</p>
+        </form>
+      </section>
+
+      <section class="account-login-overlay hidden" id="accountDevicesOverlay" role="dialog" aria-modal="true" aria-labelledby="accountDevicesTitle">
+        <div class="account-login-backdrop" id="accountDevicesBackdrop"></div>
+        <div class="account-login-card account-devices-card">
+          <header class="account-login-head">
+            <div class="account-login-brand">
+              <img src="../../assets/logo.png" alt="悸风喵核 Studio" />
+              <div>
+                <p>ACCOUNT DEVICES</p>
+                <h2 id="accountDevicesTitle">设备管理</h2>
+              </div>
+            </div>
+            <button class="account-login-close" id="accountDevicesCloseBtn" type="button" aria-label="关闭">&#215;</button>
+          </header>
+          <div class="account-devices-toolbar">
+            <p id="accountDevicesMeta">正在读取设备列表...</p>
+            <button class="mini-button soft" id="accountDevicesRefreshBtn" type="button">刷新</button>
+          </div>
+          <p class="account-login-error hidden" id="accountDevicesError" role="alert"></p>
+          <div class="account-devices-list" id="accountDevicesList"></div>
+          <p class="account-login-note">解绑设备会释放一个名额；本机被解绑后会立即退出会员状态。</p>
+        </div>
+      </section>
     </main>
+    <!-- 动态更新弹窗（启动时由 check_update 填充内容） -->
+    <div class="update-modal hidden" id="updateNotice" role="dialog" aria-modal="true" aria-labelledby="updateNoticeTitle">
+      <div class="update-card" id="updateCard">
+        <div class="update-badge" id="updateBadge">V5.0.4</div>
+        <h2 id="updateNoticeTitle">发现新版本</h2>
+        <p class="update-version-line" id="updateVersionLine"></p>
+        <p id="updateNotes"></p>
+        <ul id="updateNotesList"></ul>
+        <button class="start-button wide hidden" id="updateNoticeCloseBtn" type="button">稍后</button>
+        <div class="button-row hidden" id="updateForceButtons">
+          <button class="start-button wide" id="updateDownloadBtn" type="button">立即下载</button>
+          <button class="mini-button soft" id="updateQuitBtn" type="button">退出</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 系统公告弹窗（启动时由 get_announcements 填充） -->
+    <!-- 激活引导弹窗（启动核对失败时弹） -->
+    <div class="activation-required-modal hidden" id="activationRequiredModal" role="dialog" aria-modal="true" aria-labelledby="activationRequiredTitle">
+      <div class="activation-required-card" id="activationRequiredCard">
+        <div class="activation-required-icon" id="activationRequiredIcon">🔒</div>
+        <h2 id="activationRequiredTitle">需要激活</h2>
+        <p class="activation-required-meta" id="activationRequiredMeta"></p>
+        <p class="activation-required-reason" id="activationRequiredReason"></p>
+        <div class="activation-required-device hidden" id="activationRequiredDeviceBlock">
+          <p class="device-info">
+            当前已绑定设备：<strong id="activationRequiredDeviceName">--</strong><br />
+            绑定时间：<span id="activationRequiredDeviceTime">--</span>
+          </p>
+          <p class="device-hint">如需在新设备使用，请二选一：</p>
+          <ol class="device-options">
+            <li>在原设备上打开软件 → 设置 → 解绑设备</li>
+            <li>联系管理员微信 <strong>GBJF_StudioHy</strong> 协助换绑</li>
+          </ol>
+        </div>
+        <div class="wechat-block hidden" id="activationRequiredWechat">
+          <p class="wechat-label">管理员微信：</p>
+          <p class="wechat-id" id="activationRequiredWechatId">GBJF_StudioHy</p>
+          <p class="wechat-hint">点击复制微信号，然后到微信里搜索添加好友</p>
+        </div>
+        <div class="button-row" id="activationRequiredButtons">
+          <button class="mini-button soft hidden" id="activationRequiredSecondaryBtn" type="button"></button>
+          <button class="start-button wide hidden" id="activationRequiredPrimaryBtn" type="button"></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="announcement-modal hidden" id="announcementNotice" role="dialog" aria-modal="true" aria-labelledby="announcementTitle">
+      <div class="announcement-card">
+        <div class="announcement-icon" id="announcementIcon">📢</div>
+        <div class="announcement-counter" id="announcementCounter"></div>
+        <h2 id="announcementTitle">系统公告</h2>
+        <p class="announcement-meta" id="announcementMeta"></p>
+        <div class="announcement-content" id="announcementContent"></div>
+        <div class="button-row">
+          <button class="mini-button soft hidden" id="announcementPrevBtn" type="button">上一条</button>
+          <button class="mini-button soft hidden" id="announcementNextBtn" type="button">下一条</button>
+          <button class="start-button" id="announcementCloseBtn" type="button">我知道了</button>
+        </div>
+      </div>
+    </div>
 
     <section class="daw-export-dialog hidden" id="dawExportDialog" role="dialog" aria-modal="true" aria-labelledby="dawExportDialogTitle">
       <div class="daw-export-dialog-backdrop" id="dawExportDialogBackdrop"></div>

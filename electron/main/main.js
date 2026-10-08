@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, shell, Tray, nativeImage, session, safeStorage } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain: rawIpcMain, Menu, shell, Tray, nativeImage, session, safeStorage, net, powerMonitor } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
@@ -9,12 +9,16 @@ const https = require("https");
 const mmkvLocator = require("./mmkv-locator");
 const { installSunoDownload } = require("./suno-download");
 const { SunoAccounts } = require("./suno-accounts");
+const { createUploadPreparation } = require("./upload-preparation");
+const { refreshSunoCredential } = require("./suno-extension-refresh");
 const { AccountSessionV2 } = require("./account-session-v2");
+const { TaskAuthorizationBroker } = require("./task-authorization-broker");
+const { text: COMMERCIAL_USE_NOTICE } = require("./legal-notice");
+const { createTrustedIpcMain, hardenMainWindow, safeExternalUrl } = require("./renderer-security");
 const { ACTIVE_QUEUE_STATUSES, PersistentUploadBatchQueue, VALID_SPEEDS } = require("./upload-batch-queue");
 
-const APP_DISPLAY_NAME = "期音科技";
-const APP_VERSION_LABEL = "V5.0.0";
-// 内部使用版：以下授权/官网账号常量不再参与授权判定
+const APP_DISPLAY_NAME = "悸风喵核 Studio";
+const APP_VERSION_LABEL = "V5.0.4";
 const LICENSE_REQUIRED_MESSAGE = "该功能需要购买并激活授权码后使用";
 const LICENSE_SPOT_CHECK_RATE = 0.25;
 const LICENSE_SESSION_CACHE_MS = 3 * 60 * 1000;
@@ -24,7 +28,7 @@ const ACCOUNT_API_ORIGIN = "https://gblicensehub.xyz";
 const ACCOUNT_V2_API_BASE = "https://gblicensehub.xyz/api/app/v2";
 const ACCOUNT_SESSION_PARTITION = "persist:gaobaijifeng-account";
 const ACCOUNT_CACHE_MS = 60 * 1000;
-const ACCOUNT_AVATAR_USER_AGENT = `QiyinTechStudio/${APP_VERSION_LABEL.replace(/^V/i, "")}`;
+const ACCOUNT_AVATAR_USER_AGENT = `JifengMeowCoreStudio/${APP_VERSION_LABEL.replace(/^V/i, "")}`;
 const ACCOUNT_AVATAR_ALLOWED_DOMAINS = ["gaobaijifeng.top", "gblicensehub.xyz"];
 
 app.setName(APP_DISPLAY_NAME);
@@ -33,7 +37,7 @@ app.setName(APP_DISPLAY_NAME);
 // 未设置会导致 Win11 24H2+/Build 26200 上系统托盘图标不显示
 // （任务栏"显示所有图标"开关关闭时直接看不见），同时影响任务栏分组。
 // 必须在 ready 之前调用，且使用稳定 ID（不要用中文字符串）。
-app.setAppUserModelId("com.qiyin.suno.uploader");
+app.setAppUserModelId("com.jifeng.meowcore.studio");
 
 // ===== 閿欒鏃ュ織绯荤粺 =====
 const logDir = path.join(app.getPath("userData"), "logs");
@@ -82,6 +86,10 @@ if (!singleInstanceLock) {
 }
 
 let mainWindow = null;
+const rendererFile = path.join(__dirname, "..", "renderer", "index.html");
+// These APIs belong exclusively to the packaged local UI. Portal/payment windows
+// use their isolated website session and never receive this preload bridge.
+const ipcMain = createTrustedIpcMain(rawIpcMain, () => mainWindow, rendererFile);
 let currentJob = null;
 let uploadCancelFile = "";
 let uploadStopRequested = false;
@@ -90,14 +98,20 @@ let uploadBatchAdvanceTimer = null;
 // Deliberately session-only: a fresh manual Suno login can start two uploads
 // without repeating the network preflight.  Restarting the app resets it.
 let sunoOperation = false;
+let activeUploadPreparation = null;
+let uploadRequestEpoch = 0;
 let sunoAccounts = null;
 function getSunoAccounts() {
-  if (!sunoAccounts) sunoAccounts = new SunoAccounts(app.getPath("userData"));
+  if (!sunoAccounts) sunoAccounts = new SunoAccounts(app.getPath("userData"),{
+    seal:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error('系统安全存储暂不可用');return safeStorage.encryptString(value);},
+    unseal:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error('系统安全存储暂不可用');return safeStorage.decryptString(value);},
+    onState:snapshot=>send('suno:accounts-event',snapshot),
+  });
   return sunoAccounts;
 }
 function sunoEnv(id) { return getSunoAccounts().env(id || getSunoAccounts().selectedId, resolvedSunoWorkDir()); }
 function emitSunoAccounts() { send("suno:accounts-event", getSunoAccounts().snapshot()); }
-app.on("before-quit", () => { sunoAccounts?.stopPairing().catch(() => {}); });
+app.on("before-quit", () => { activeUploadPreparation?.cancel(); sunoAccounts?.stopPairing().catch(() => {}); sunoAccounts?.stopConnections({preserve:true}).catch(() => {}); });
 let separationJob = null;
 let separationCancelRequested = false;
 let separationDownloadJob = null;
@@ -124,6 +138,7 @@ let accountLogoutInProgress = false;
 let accountLoginInProgress = false;
 let accountAutoLoginInProgress = false;
 let accountSessionV2 = null;
+let taskAuthorizationBroker = null;
 const accountEmailCodeCooldowns = new Map();
 // 默认改为 "exit"：Win11 24H2+ 托盘图标经常不可见（即使 new Tray() 不抛错），
 // 默认 minimize 会让用户"按了关闭按钮就再也找不到窗口"。
@@ -359,7 +374,7 @@ function ensureTray() {
       { type: "separator" },
       { label: "彻底退出", click: () => quitApp() }
     ]);
-    appTray.setToolTip(`${APP_DISPLAY_NAME} · Suno歌曲上传器`);
+    appTray.setToolTip(`${APP_DISPLAY_NAME} · 悸风喵核 Studio`);
     appTray.setContextMenu(contextMenu);
     appTray.on("double-click", () => showMainWindowFromTray());
     appTray.on("click", () => showMainWindowFromTray());
@@ -450,21 +465,28 @@ function vendorExecutable(toolName, baseName, options = {}) {
 function backendExecutable() {
   const root = projectRoot();
   if (app.isPackaged) {
-    const candidate = path.join(root, "backend", "backend.exe");
-    if (fs.existsSync(candidate)) return { command: candidate, prefixArgs: [] };
+    const exe = process.platform === "win32" ? "backend.exe" : "backend";
+    const candidate = path.join(root, "backend", exe);
+    return { command: require("./worker-integrity").verifyWorker(candidate), prefixArgs: [] };
   }
-  const command = process.env.GAOBAI_PYTHON || path.join(root, "python-embed", "python.exe");
+
+  const envPython = process.env.GAOBAI_PYTHON;
+  const command = envPython || (process.platform === "win32" ? "python" : "python3");
   return {
     command,
-    prefixArgs: [path.join(root, "backend", "backend.py")]
+    prefixArgs: [path.join(root, "python", "backend.py")]
   };
 }
 
 function pythonScriptExecutable(scriptName) {
   const root = projectRoot();
-  // 用内置 python-embed 跑 backend/*.py（便于支持"原始源 m4a"等新格式，依赖已内置）
-  const command = process.env.GAOBAI_PYTHON || path.join(root, "python-embed", "python.exe");
-  return { command, prefixArgs: [path.join(root, "backend", scriptName + ".py")] };
+  if (app.isPackaged) {
+    const exe = process.platform === "win32" ? `${scriptName}.exe` : scriptName;
+    return { command: require("./worker-integrity").verifyWorker(path.join(root, "backend", exe)), prefixArgs: [] };
+  }
+  const envPython = process.env.GAOBAI_PYTHON;
+  const command = envPython || (process.platform === "win32" ? "python" : "python3");
+  return { command, prefixArgs: [path.join(root, "python", `${scriptName}.py`)] };
 }
 
 function backendEnv(extra = {}) {
@@ -743,16 +765,19 @@ function createWindow() {
     resizable: true,
     frame: false,
     backgroundColor: "#f7fbff",
-    title: "期音科技 · Suno歌曲上传器",
+    title: APP_DISPLAY_NAME,
     icon: path.join(projectRoot(), "assets", "logo.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
+      devTools: !app.isPackaged,
+      sandbox: true,
       nodeIntegration: false
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+  hardenMainWindow(mainWindow, rendererFile);
+  mainWindow.loadFile(rendererFile);
   mainWindow.on("close", (event) => {
     if (isQuitting) return;
     handleCloseRequest(event);
@@ -947,7 +972,7 @@ function normalizeAccountProfile(payload) {
     if (leftPermanent !== rightPermanent) return leftPermanent ? -1 : 1;
     return String(right.expires_at || "").localeCompare(String(left.expires_at || ""));
   })[0] || null;
-  const displayName = String(user.nickname || user.display_name || user.name || user.email || "期音科技用户").trim();
+  const displayName = String(user.nickname || user.display_name || user.name || user.email || "告白悸风用户").trim();
   const avatarUrl = accountAvatarUrl(user);
   const permanent = Boolean(entitlement && (entitlement.is_permanent || entitlement.is_lifetime));
   const expiresAt = entitlement && !permanent ? (entitlement.expires_at || null) : null;
@@ -968,7 +993,7 @@ function normalizeAccountProfile(payload) {
     entitlement: entitlement ? {
       id: entitlement.id || "",
       source: entitlement.source || "account",
-      product_name: entitlement.product?.name || entitlement.plan?.name || "期音科技",
+      product_name: entitlement.product?.name || entitlement.plan?.name || "悸风喵核 Studio",
     } : null,
     is_permanent: permanent,
     expires_at: expiresAt,
@@ -1002,7 +1027,7 @@ function normalizeV2AccountProfile(state, accountPayload = null) {
   const remoteUser = remoteProfile.user || {};
   const user = {
     id: remoteUser.id || sessionUser.id || sessionUser.uid || "",
-    name: remoteUser.name || sessionUser.nickname || sessionUser.display_name || sessionUser.name || sessionUser.email || "期音科技用户",
+    name: remoteUser.name || sessionUser.nickname || sessionUser.display_name || sessionUser.name || sessionUser.email || "告白悸风用户",
     email: remoteUser.email || sessionUser.email || "",
     avatar_url: remoteUser.avatar_url || accountAvatarUrl(sessionUser) || "",
   };
@@ -1038,6 +1063,7 @@ function getAccountSessionV2() {
     appId: "jfmhstudio",
     log: writeLog,
     onState: (state) => {
+      taskAuthorizationBroker?.invalidateSessions();
       const cachedUser = accountProfileCache?.profile?.user;
       accountProfileCache = null;
       const cachedAccountPayload = cachedUser ? { user: cachedUser } : null;
@@ -1051,6 +1077,22 @@ async function ensureAccountSessionV2() {
   const manager = getAccountSessionV2();
   await manager.initialize();
   return manager;
+}
+
+function getTaskAuthorizationBroker() {
+  if (!taskAuthorizationBroker) {
+    const manager = getAccountSessionV2();
+    taskAuthorizationBroker = new TaskAuthorizationBroker({
+      getSession: () => manager.taskAuthorizationSession(),
+      requestTask: (session, body) => manager.requestExecutionTask(session, body),
+    });
+  }
+  return taskAuthorizationBroker;
+}
+
+async function createTaskAuthorization(feature) {
+  await ensureAccountSessionV2();
+  return getTaskAuthorizationBroker().register(feature);
 }
 
 function accountProfileToLicenseStatus(profile) {
@@ -1229,12 +1271,54 @@ function sanitizeBackendEvent(event) {
 }
 
 function runBackend(args, options = {}) {
+  if (args.includes("--source") && !options.taskAuthorization) throw new Error("上传任务缺少独立授权，请重新开始任务。");
   const spec = backendExecutable();
-  const child = spawn(spec.command, [...spec.prefixArgs, ...args], {
-    cwd: projectRoot(),
-    env: backendEnv(options.env || {}),
-    windowsHide: true
-  });
+  let child;
+  try {
+    child = spawn(spec.command, [...spec.prefixArgs, ...args], {
+      cwd: projectRoot(),
+      env: backendEnv({ ...(options.env || {}), ...(options.taskAuthorization?.env || {}) }),
+      windowsHide: true
+    });
+  } catch (error) { void options.taskAuthorization?.close(); throw error; }
+  const releaseTaskAuthorization = () => { void options.taskAuthorization?.close(); };
+  child.once("error", releaseTaskAuthorization);
+  child.once("close", releaseTaskAuthorization);
+
+  const startedAt = Date.now();
+  let firstEvent = false;
+  let startupTimer;
+  let startupNoticeTimer;
+  const clearStartupTimers = () => {
+    clearTimeout(startupTimer);
+    clearTimeout(startupNoticeTimer);
+  };
+  const publish = (event) => {
+    if (event.type === "failed") child._backendFailed = true;
+    if (event.type === "auth_required") child._backendAuthRequired = event;
+    if (typeof options.onEvent === "function") {
+      try { options.onEvent(event, child); } catch (_) {}
+    }
+    if (options.eventChannel) send(options.eventChannel, event);
+  };
+  if (options.startupTimeoutMs > 0) {
+    writeLog(`[upload-startup] 后端进程已创建 pid=${child.pid || "pending"}，等待引擎就绪`);
+    publish({type:"startup", message:"正在启动上传引擎…", progress:3});
+    startupNoticeTimer = setTimeout(() => {
+      writeLog("[upload-startup] 15 秒尚未收到引擎启动消息");
+      publish({type:"startup", message:"上传引擎仍在启动，请稍候；可点击停止取消。", progress:3});
+    }, 15000);
+    startupTimer = setTimeout(() => {
+      clearStartupTimers();
+      const message = "上传引擎启动超时，尚未开始发送音频。请重试；若仍失败，请提供最新 app.log。";
+      writeLog(`[upload-startup] ${message}`, "error");
+      publish({type:"failed", message});
+      if (process.platform === "win32" && child.pid) {
+        const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {windowsHide:true});
+        killer.on("error", () => {try {child.kill();} catch (_) {}});
+      } else {try {child.kill("SIGTERM");} catch (_) {}}
+    }, options.startupTimeoutMs);
+  }
 
   let buffer = "";
   const emitText = (text) => {
@@ -1246,12 +1330,13 @@ function runBackend(args, options = {}) {
       writeLog(`[backend] ${sanitizeBackendEvent({ type: "log", message: line }).message || line}`);
       try {
         const event = sanitizeBackendEvent(JSON.parse(line));
-        if (event && event.type === "failed") child._backendFailed = true;
-        if (event && event.type === "auth_required") child._backendAuthRequired = event;
-        if (typeof options.onEvent === "function") {
-          try { options.onEvent(event, child); } catch (_) {}
+        if (!event || typeof event.type !== "string") continue;
+        if (!firstEvent) {
+          firstEvent = true;
+          clearStartupTimers();
+          if (options.startupTimeoutMs) writeLog(`[upload-startup] 引擎首条消息 ${Date.now()-startedAt}ms，type=${event.type}`);
         }
-        if (options.eventChannel) send(options.eventChannel, event);
+        publish(event);
       } catch (_) {
         const event = sanitizeBackendEvent({ type: "log", message: line });
         if (options.eventChannel) send(options.eventChannel, event);
@@ -1264,15 +1349,23 @@ function runBackend(args, options = {}) {
   child.stdout.on("data", emitText);
   child.stderr.on("data", (text) => {
     for (const line of String(text).split(/\r?\n/)) {
-      if (line.trim() && options.eventChannel) {
-        send(options.eventChannel, sanitizeBackendEvent({ type: "log", level: "warn", message: line }));
+      if (line.trim()) {
+        const safeLine = line.replace(/eyJ[A-Za-z0-9_.-]+/g, "[REDACTED_JWT]");
+        const event = sanitizeBackendEvent({ type: "log", level: "warn", message: safeLine });
+        writeLog(`[backend stderr] ${event.message}`, "warn");
+        if (options.eventChannel) send(options.eventChannel, event);
       }
     }
   });
 
   child.on("error", (error) => {
+    clearStartupTimers();
     writeLog(`后端进程启动失败: ${error.message}`, "error");
-    if (options.eventChannel) send(options.eventChannel, { type: "log", level: "error", message: `进程启动失败: ${error.message}` });
+    publish({ type:"failed", message:`上传进程启动失败：${error.message}` });
+  });
+  child.on("close", () => {
+    clearStartupTimers();
+    if (options.startupTimeoutMs) writeLog(`[upload-startup] 后端退出，收到引擎消息=${firstEvent}，运行 ${Date.now()-startedAt}ms`);
   });
 
   return child;
@@ -1280,31 +1373,59 @@ function runBackend(args, options = {}) {
 
 function runBackendJson(args, options = {}) {
   return new Promise((resolve, reject) => {
+    if(options.signal?.aborted){reject(options.signal.reason);return;}
     const spec = backendExecutable();
     const child = spawn(spec.command, [...spec.prefixArgs, ...args], {
       cwd: projectRoot(),
       env: backendEnv(options.env || {}),
       windowsHide: true
     });
-    if (options.input !== undefined) child.stdin.end(JSON.stringify(options.input));
-    let stdout = "";
-    let stderr = "";
+    const authCommand = args.some(arg=>['--prepare-suno-token','--check-login-token','--check-login-token-local','--recover-suno-token','--import-suno-token','--logout-suno'].includes(arg));
+    const timeoutMs = options.timeoutMs ?? (authCommand ? 35000 : 0);
+    let settled=false,timer=null,stdout="",stderr="",terminationRequested=false;
+    const cleanup=()=>{clearTimeout(timer);options.signal?.removeEventListener('abort',abort);};
+    const finish=(error,value)=>{if(settled)return;settled=true;cleanup();if(error)reject(error);else resolve(value);};
+    const kill=()=>{
+      terminationRequested=true;
+      if (process.platform === "win32" && child.pid) {
+        const killer=spawn("taskkill",["/pid",String(child.pid),"/T","/F"],{windowsHide:true});
+        killer.on("error",()=>{try {child.kill();} catch (_) {}});
+      } else {try {child.kill("SIGTERM");} catch (_) {}}
+    };
+    const abort=()=>{finish(options.signal.reason || Object.assign(new Error('已停止上传准备。'),{code:'upload_cancelled'}));kill();};
+    options.signal?.addEventListener('abort',abort,{once:true});
+    if(options.signal?.aborted)abort();
+    timer = timeoutMs > 0 && !settled ? setTimeout(() => {
+      finish(Object.assign(new Error("Suno 登录服务响应超时，登录资料已保留，请检查网络或连接助手后重试。"),{code:'suno_network_error'}));
+      kill();
+    },timeoutMs) : null;
+    if (options.input !== undefined) {
+      child.stdin.on('error',error=>{finish(error);kill();});
+      child.stdin.end(JSON.stringify(options.input));
+    }
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (text) => { stdout += text; });
-    child.stderr.on("data", (text) => { stderr += text; });
-    child.on("error", reject);
+    const append=(kind,text)=>{
+      if(settled)return;
+      if(kind==='stdout')stdout+=text;else stderr+=text;
+      if(stdout.length+stderr.length>1024*1024){finish(new Error('服务返回内容过大，已停止本次操作。'));kill();}
+    };
+    child.stdout.on("data", (text) => append('stdout',text));
+    child.stderr.on("data", (text) => append('stderr',text));
+    child.on("error", error=>finish(error));
     child.on("close", (code) => {
+      if(terminationRequested){try{options.onTerminated?.();}catch{}}
+      if(settled)return;
       if (code !== 0) {
-        reject(new Error(stderr.trim() || stdout.trim() || `backend exited ${code}`));
+        finish(new Error((stderr.trim() || stdout.trim() || `backend exited ${code}`).replace(/eyJ[A-Za-z0-9_.-]+/g,'[REDACTED_JWT]')));
         return;
       }
       const lines = stdout.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
       const last = lines[lines.length - 1] || "{}";
       try {
-        resolve(JSON.parse(last));
+        finish(null,JSON.parse(last));
       } catch (error) {
-        reject(error);
+        finish(error);
       }
     });
   });
@@ -1394,8 +1515,32 @@ function refreshLicenseInBackground(featureCode, options = {}) {
 }
 
 async function requireActiveLicense(featureCode, featureName = featureCode, options = {}) {
-  // 复刻版授权旁路：跳过官网账号权益校验，直接放行所有功能
-  return { ok: true, license: { valid: true, permanent: true } };
+  if (featureCode === "separation") return { ok: true };
+  const forceOnline = Boolean(options.forceOnline);
+  const accountProfile = await getAccountProfile({ forceOnline });
+  if (accountProfile.valid) {
+    const capability = featureCode.startsWith("audio_editor_") ? "audio_editor"
+      : featureCode === "lyrics_process" ? "lyrics" : featureCode;
+    const grant = await getAccountSessionV2().ensureExecutionGrant(capability);
+    if (!grant.ok) return { ...grant, valid:false, needActivate:true };
+    const status = accountProfileToLicenseStatus(accountProfile);
+    rememberLicenseSession(status, true);
+    return { ok: true, license: status };
+  }
+  clearLicenseSessionCache(accountProfile.reason_code || "account-required");
+  const loggedIn = Boolean(accountProfile.loggedIn);
+  const reasonCode = accountProfile.reason_code || (loggedIn ? "account_no_entitlement" : "account_not_logged_in");
+  const message = loggedIn
+    ? `${featureName}：当前官网账号没有可用的软件权益，请前往商城购买。`
+    : `${featureName}：请先登录官网账号并同步软件权益。`;
+  writeLog(`账号权益拦截：${featureName} ${reasonCode}`, "warn");
+  return {
+    ok: false,
+    valid: false,
+    needActivate: true,
+    reason_code: reasonCode,
+    message,
+  };
 }
 
 function accountApiResultMessage(result, fallback) {
@@ -1532,25 +1677,35 @@ async function resetAccountPassword(payload) {
   }
 }
 
-async function prepareSunoTokenForUpload(skipNetworkPreflight, accountId) {
+async function prepareSunoTokenForUpload(skipNetworkPreflight, accountId, preparation) {
   const env = sunoEnv(accountId);
-  const localArgs = skipNetworkPreflight ? ["--check-login-token-local"] : ["--check-login-token"];
+  getSunoAccounts().requestRefresh?.(accountId);
   try {
-    const initial = await runBackendJson(localArgs, { env });
-    if (initial && initial.loggedIn) return { ok: true, skipNetworkPreflight };
+    const timeoutMs=Math.min(30000,preparation?.remainingMs() || 30000);
+    const result=await runBackendJson(['--prepare-suno-token','--auth-timeout-sec',String(Math.max(1,Math.min(25,Math.floor(timeoutMs/1000)-2)))],
+      {env,signal:preparation?.signal,timeoutMs});
+    const codes={network_error:'suno_network_error',auth_timeout:'suno_network_error',auth_error:'suno_network_error',
+      cancelled:'upload_cancelled',login_required:'suno_login_required',account_mismatch:'suno_login_required',
+      reconnect_required:env.GAOBAI_SUNO_LOGIN_METHOD==='extension'?'suno_extension_required':'suno_browser_required'};
+    const ok=Boolean(result?.ok && result?.loggedIn);
+    return {...result,ok,code:ok?'ready':(codes[result?.code] || 'suno_network_error'),
+      reason:result?.reason || result?.message || (ok?'':'登录服务未能完成验证，登录资料已保留。')};
   } catch (error) {
+    if(preparation?.signal.aborted)throw preparation.signal.reason;
     writeLog(`Suno 登录预检异常: ${error.message}`, "warn");
+    return {ok:false,code:error.code || 'suno_network_error',reason:error.message || 'Suno 网络暂不可用，登录资料已保留。'};
   }
+}
 
-  // A saved token may be stale or absent while the dedicated Suno browser is
-  // still signed in.  Recover silently before asking the user to log in again.
-  try {
-    const recovered = await runBackendJson(["--recover-suno-token", "--token-recovery-attempts", "4"], { env });
-    if (recovered && recovered.loggedIn) return { ok: true, recovered: true, skipNetworkPreflight: false };
-    return { ok: false, reason: recovered && recovered.reason ? recovered.reason : "未获取到有效 Suno Token" };
-  } catch (error) {
-    return { ok: false, reason: error.message || "Suno Token 校验失败" };
-  }
+function showAboutDialog() {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+  dialog.showMessageBox(mainWindow, {
+    type: "info",
+    title: "关于",
+    message: APP_DISPLAY_NAME,
+    detail: `版本 ${APP_VERSION_LABEL}\n发布日期：2026-09-12\nJifeng MeowCore Studio\n\n支持音频剪辑、升降调、变速不变调、伴奏/人声分离、开放音频格式转换、Suno 上传与歌曲下载。\n\n${COMMERCIAL_USE_NOTICE}`
+  });
+  return { ok: true };
 }
 
 function buildChineseMenu() {
@@ -1558,7 +1713,7 @@ function buildChineseMenu() {
     {
       label: "文件",
       submenu: [
-        { label: `关于 ${APP_DISPLAY_NAME}`, role: "about" },
+        { label: `关于 ${APP_DISPLAY_NAME}`, click: showAboutDialog },
         { type: "separator" },
         { label: "退出", accelerator: "CmdOrCtrl+Q", click: () => { isQuitting = true; app.quit(); } }
       ]
@@ -1594,14 +1749,7 @@ function buildChineseMenu() {
       submenu: [
         {
           label: "关于",
-          click: () => {
-            dialog.showMessageBox(mainWindow, {
-              type: "info",
-              title: "关于",
-              message: APP_DISPLAY_NAME,
-              detail: `版本 ${APP_VERSION_LABEL}\n期音科技\n\n基于 Electron + Python，支持音频剪辑、伴奏/人声分离、音频解锁和 Suno 上传。`
-            });
-          }
+          click: showAboutDialog
         }
       ]
     }
@@ -1611,6 +1759,8 @@ function buildChineseMenu() {
   Menu.setApplicationMenu(menu);
 }
 app.whenReady().then(() => {
+  void getSunoAccounts().restoreConnections(refreshSunoExtensionToken).catch(error=>writeLog(`恢复 Suno 助手连接失败：${error.message}`,'warn'));
+  powerMonitor.on('resume',()=>{for(const id of ['1','2','3'])getSunoAccounts().requestRefresh(id);});
   // 仅在拿到单实例锁的情况下初始化窗口/托盘
   if (!singleInstanceLock) {
     writeLog("未持有单实例锁，跳过窗口初始化");
@@ -1622,7 +1772,13 @@ app.whenReady().then(() => {
   ensureTray();
   buildChineseMenu();
   loadClosePrefs();
-  // 内部使用版：不初始化官网账号会话，不做账号自动登录/权益同步
+  ensureAccountSessionV2()
+    .then(() => tryAccountAutoLogin())
+    .catch((error) => {
+      writeLog(`V2 账号会话初始化失败: ${error.message || error}`, "warn");
+    });
+
+  // 用户再次双击 EXE 时，第二个进程把窗口拉到前面而不是再开一个
   app.on("second-instance", () => {
     writeLog("检测到第二次启动，聚焦已有主窗口");
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1699,6 +1855,7 @@ app.on("before-quit", () => {
   // Explicit account logout is the only action that unbinds the device.
   accountSessionV2?.stopHeartbeat();
 });
+app.on("will-quit", () => { void taskAuthorizationBroker?.close(); });
 
 installSunoDownload({
   app, ipcMain, dialog, shell,
@@ -1707,6 +1864,7 @@ installSunoDownload({
   ffmpeg: ffmpegExecutable,
   env: backendEnv,
   authorize: () => requireActiveLicense("suno_download", "歌曲下载"),
+  createTaskAuthorization: () => createTaskAuthorization("suno_download"),
 });
 
 ipcMain.handle("audio:pick", async () => {
@@ -1887,14 +2045,7 @@ ipcMain.handle("prefs:set-close", async (_event, payload = {}) => {
 });
 
 ipcMain.handle("app:showAbout", async () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
-  dialog.showMessageBox(mainWindow, {
-    type: "info",
-    title: "关于",
-    message: APP_DISPLAY_NAME,
-    detail: `版本 ${APP_VERSION_LABEL}\n发布日期：2026-09-06\n期音科技\n\n基于 Electron + Python\n支持音频剪辑、升降调、变速不变调、伴奏/人声分离、开放音频格式转换、一键上传 Suno`
-  });
-  return { ok: true };
+  return showAboutDialog();
 });
 
 ipcMain.handle("app:showSettings", async () => {
@@ -1927,6 +2078,22 @@ ipcMain.handle("app:showSettings", async () => {
 });
 
 ipcMain.handle("suno:accounts", () => ({ok:true, ...getSunoAccounts().snapshot()}));
+
+async function refreshSunoExtensionToken(id,userId,payload,isActive) {
+  return refreshSunoCredential(getSunoAccounts().paths(id).token,userId,payload,{
+    isActive,
+    verify: async (token,options={}) => {
+      const browserToken=JSON.stringify({token:Buffer.from(JSON.stringify({timestamp:Date.now()})).toString('base64')});
+      const response=await net.fetch("https://studio-api-prod.suno.com/api/feed/v2?is_liked=false&limit=1&page=0",{
+        method:"GET",redirect:"error",signal:options.signal || AbortSignal.timeout(Math.min(8000,options.timeoutMs || 8000)),
+        headers:{Authorization:`Bearer ${token}`,"Browser-Token":browserToken,Origin:"https://suno.com",Referer:"https://suno.com/studio",Accept:"application/json"},
+      });
+      const valid=response.status===200;
+      await response.body?.cancel().catch(()=>{});
+      return {ok:valid,status_code:response.status};
+    },
+  });
+}
 ipcMain.handle("suno:select-account", async (_event, id) => {
   if (currentJob || sunoOperation || isUploadBatchActive()) return {ok:false,message:"请等待当前任务结束或暂停队列后再切换账号。"};
   await getSunoAccounts().stopPairing();
@@ -1936,24 +2103,25 @@ ipcMain.handle("suno:select-account", async (_event, id) => {
 ipcMain.handle("suno:extension-start", async () => {
   if (currentJob || sunoOperation || isUploadBatchActive()) return {ok:false,message:"请先停止当前任务。"};
   const accounts=getSunoAccounts();
-  return accounts.startPairing(accounts.selectedId, async (id,payload) => {
+  return accounts.startPairing(accounts.selectedId, async (id,payload,isActive) => {
     if (currentJob || sunoOperation || isUploadBatchActive()) return {ok:false};
     sunoOperation=true;
     const env=sunoEnv(id);
     const temporary=`${env.GAOBAI_SUNO_TOKEN_FILE}.pair-${crypto.randomUUID()}`;
     try {
       const result=await runBackendJson(["--import-suno-token"],{
-        env:{...env,GAOBAI_SUNO_TOKEN_FILE:temporary},input:payload,
+        env:{...env,GAOBAI_SUNO_TOKEN_FILE:temporary},input:payload,timeoutMs:25000,
+        onTerminated:()=>{try{fs.unlinkSync(temporary);}catch{}},
       });
       if (result.ok) {
-        if (accounts.pairing?.id !== id || !accounts.pairing.secret) return {ok:false};
+        if (!isActive() || accounts.pairing?.id !== id || !accounts.pairing.secret) return {ok:false};
         fs.renameSync(temporary,env.GAOBAI_SUNO_TOKEN_FILE);
         emitSunoAccounts();
         send("suno:accounts-event",{...accounts.snapshot(),connectedId:id});
       }
       return result;
     } finally {try {fs.unlinkSync(temporary);} catch {} sunoOperation=false;}
-  });
+  }, refreshSunoExtensionToken);
 });
 ipcMain.handle("suno:extension-cancel", async () => { await getSunoAccounts().stopPairing(); return {ok:true}; });
 ipcMain.handle("suno:extension-folder", async () => {
@@ -1967,6 +2135,7 @@ ipcMain.handle("app:login", async () => {
   const id=getSunoAccounts().selectedId;
   try {
     await getSunoAccounts().stopPairing();
+    await getSunoAccounts().stopConnection(id);
     refreshLicenseInBackground("suno_login");
     const loginJob=runBackend(["--login-only"],{eventChannel:"backend:event",env:sunoEnv(id),
       onEvent:event=>{ if(event?.type==="result" && event.loginOk) emitSunoAccounts(); }});
@@ -1981,6 +2150,7 @@ ipcMain.handle("app:logout", async () => {
   const id=getSunoAccounts().selectedId;
   try {
     await getSunoAccounts().stopPairing();
+    await getSunoAccounts().stopConnection(id);
     const result=await runBackendJson(["--logout-suno"],{env:sunoEnv(id)});
     emitSunoAccounts();
     return result;
@@ -1990,6 +2160,8 @@ ipcMain.handle("app:logout", async () => {
 
 ipcMain.handle("app:check-login-status", async () => {
   const accountId=getSunoAccounts().selectedId;
+  const account=getSunoAccounts().info(accountId);
+  getSunoAccounts().requestRefresh(accountId);
   try {
     const result = await runBackendJson(["--check-login-token"],{env:sunoEnv(accountId)});
     if (result && result.loggedIn) {
@@ -1997,10 +2169,11 @@ ipcMain.handle("app:check-login-status", async () => {
       return { accountId, loggedIn: true, tokenSource: result.tokenSource || "已保存", tokenCheck: result.tokenCheck || null };
     }
     writeLog(`Suno 登录令牌不可用：${result && result.reason ? result.reason : "unknown"}`, "warn");
-    return { accountId, loggedIn: false, reason: result && result.reason ? result.reason : "token_invalid", tokenCheck: result && result.tokenCheck ? result.tokenCheck : null };
+    return { accountId, loggedIn: false, hasCredentials:account.hasCredentials, loginMethod:account.loginMethod,
+      connectionState:getSunoAccounts().info(accountId).connectionState, reason: result && result.reason ? result.reason : "token_invalid", tokenCheck: result && result.tokenCheck ? result.tokenCheck : null };
   } catch (error) {
     writeLog(`检查登录状态失败: ${error.message}`, "error");
-    return { accountId, loggedIn: false, reason: error.message || "check_failed" };
+    return { accountId, loggedIn: false, hasCredentials:account.hasCredentials,loginMethod:account.loginMethod,reason: error.message || "check_failed" };
   }
 });
 
@@ -3068,30 +3241,43 @@ function updateUploadBatchFromBackend(event, itemId) {
 }
 
 async function launchUploadTask(payload = {}, options = {}) {
-  if (sunoOperation) return {ok:false,message:"账号正在处理登录或验证，请稍候。"};
+  if (sunoOperation && (!options.preparation || activeUploadPreparation!==options.preparation)) return {ok:false,message:"账号正在处理登录或验证，请稍候。"};
   sunoOperation=true;
-  try { return await launchUploadTaskImpl(payload, options); }
-  finally { sunoOperation=false; }
+  const preparation=options.preparation || createUploadPreparation();
+  activeUploadPreparation=preparation;
+  try { return await launchUploadTaskImpl(payload, {...options,preparation}); }
+  catch(error) {return {ok:false,code:error.code || "task_start_failed",message:error.message || "上传准备失败，请重试。"};}
+  finally {
+    preparation.dispose();
+    if(activeUploadPreparation===preparation)activeUploadPreparation=null;
+    sunoOperation=false;
+  }
 }
 async function launchUploadTaskImpl(payload = {}, options = {}) {
+  const preparation=options.preparation;
+  preparation.check();
   const accountId=getSunoAccounts().id(payload.accountId || getSunoAccounts().selectedId);
-  await getSunoAccounts().stopPairing();
+  await preparation.wait(getSunoAccounts().stopPairing());
   if (!options.licenseChecked) {
-    const license = await requireActiveLicense("suno_upload", "上传 Suno", { forceOnline: true });
+    const license = await preparation.wait(requireActiveLicense("suno_upload", "上传 Suno", { forceOnline: true }));
     if (!license.ok) return license;
   }
+  preparation.check();
   if (currentJob) return { ok: false, message: "已有任务正在运行" };
   if (!payload.audioPath || !fs.existsSync(payload.audioPath) || !isOpenAudioFile(payload.audioPath)) {
     return { ok: false, code: "audio_not_found", message: "上传音频不存在或格式不受支持。" };
   }
 
-  const auth = await prepareSunoTokenForUpload(false, accountId);
+  writeLog(`[upload-startup] 正在验证账号 ${accountId} 的上传凭据`);
+  send("backend:event",{type:"startup",message:"正在检查 Suno 上传凭据…",progress:3,batchMode:Boolean(options.batchItemId)});
+  const auth = await preparation.wait(prepareSunoTokenForUpload(false, accountId, preparation));
+  preparation.check();
   if (!auth.ok) {
     writeLog(`Suno Token 不可用，未创建上传任务: ${auth.reason || "unknown"}`, "warn");
     return {
       ok: false,
-      code: "suno_login_required",
-      message: "Suno 未完成登录，未获取到任何有效的 Suno 密钥。请尝试更换 Suno 账号或切换网络代理后重新登录。",
+      code: auth.code || "suno_login_required",
+      message: auth.reason || "Suno 登录暂时不可用。请保持原账号网页打开，并更新、重新连接登录助手后重试。",
     };
   }
 
@@ -3105,18 +3291,21 @@ async function launchUploadTaskImpl(payload = {}, options = {}) {
     : String(payload.resumePolicy || "").toLowerCase();
   if (!requestedResumePolicy) {
     try {
-      const candidate = await runBackendJson([
+      const candidate = await preparation.wait(runBackendJson([
         "--resume-candidate",
         "--source", payload.audioPath,
         "--speed", payload.speed || "fast",
-      ], {env:sunoEnv(accountId)});
+      ], {env:sunoEnv(accountId),signal:preparation.signal,timeoutMs:Math.min(15000,preparation.remainingMs())}));
       if (candidate && candidate.candidate) {
         return { ok: false, code: "resume_decision_required", candidate: candidate.candidate };
       }
     } catch (error) {
+      preparation.check();
       writeLog(`旧上传任务检查失败，将创建新项目: ${error.message}`, "warn");
     }
   }
+
+  preparation.check();
 
   const batchItemId = String(options.batchItemId || "");
   writeLog(`${batchItemId ? `[批量 ${batchItemId}] ` : ""}开始上传 ${payload.audioPath}, 标题: ${payload.title || "(空)"}, 速度: ${payload.speed}`);
@@ -3132,19 +3321,33 @@ async function launchUploadTaskImpl(payload = {}, options = {}) {
   try { fs.unlinkSync(uploadCancelFile); } catch (_) {}
   uploadStopRequested = false;
   const uploadEnv = { ...sunoEnv(accountId), GAOBAI_CANCEL_FILE: uploadCancelFile };
-  if (auth.skipNetworkPreflight && !auth.recovered) uploadEnv.GAOBAI_SKIP_SUNO_TOKEN_PRECHECK = "1";
+  if (auth.tokenFingerprint && auth.verifiedAt) {
+    uploadEnv.GAOBAI_SUNO_PRECHECK_SHA256=String(auth.tokenFingerprint);
+    uploadEnv.GAOBAI_SUNO_PRECHECK_AT=String(auth.verifiedAt);
+  }
 
   let job = null;
-  job = runBackend(args, {
+  let taskAuthorization;
+  try {
+    taskAuthorization = await preparation.wait(createTaskAuthorization("suno_upload"), value=>value?.close());
+    preparation.check();
+  }
+  catch (error) { void taskAuthorization?.close(); return { ok: false, code: error.code || "task_authorization_failed", message: error.message || "任务授权暂时不可用，请稍后重试。" }; }
+  try { job = runBackend(args, {
     eventChannel: "backend:event",
+    startupTimeoutMs: Math.min(90000,preparation.remainingMs()),
     env: uploadEnv,
+    taskAuthorization,
     onEvent: (event) => {
       if (!batchItemId || !event || typeof event !== "object") return;
       event.batchMode = true;
       event.batchItemId = batchItemId;
       updateUploadBatchFromBackend(event, batchItemId);
     },
-  });
+  }); } catch (error) {
+    void taskAuthorization.close();
+    return { ok: false, code: "task_start_failed", message: "上传组件无法启动，请重新安装最新版软件。" };
+  }
   job._batchItemId = batchItemId;
   currentJob = job;
 
@@ -3233,7 +3436,7 @@ function finishUploadBatchItem(itemId, outcome = {}) {
   }
 }
 
-async function startNextUploadBatchItem() {
+async function startNextUploadBatchItem(preparation) {
   const queue = getUploadBatchQueue();
   if (queue.state.status !== "running" || currentJob) return uploadBatchSnapshot();
   const item = queue.nextPending();
@@ -3254,6 +3457,7 @@ async function startNextUploadBatchItem() {
   emitUploadBatchState("item-started", { itemId: item.id });
 
   const result = await launchUploadTask(item, {
+    preparation,
     batchItemId: item.id,
     forceNew: true,
     licenseChecked: true,
@@ -3262,6 +3466,16 @@ async function startNextUploadBatchItem() {
   if (result.ok) return uploadBatchSnapshot();
 
   queue.state.currentItemId = "";
+  if(result.code==='upload_cancelled' || ['cancelled','paused','pausing'].includes(queue.state.status)) {
+    const cancelled=queue.state.status==='cancelled';
+    queue.updateItem(item.id,{status:cancelled?'cancelled':'pending',message:cancelled?'队列已停止':'已暂停，等待继续',error:''},false);
+    if(!cancelled)queue.state.status='paused';
+    queue.save();return emitUploadBatchState(cancelled?'cancelled':'paused');
+  }
+  if(result.code==='suno_network_error' || result.code==='suno_extension_required' || result.code==='suno_browser_required') {
+    queue.updateItem(item.id,{status:'pending',message:'等待恢复 Suno 连接',error:result.message || ''},false);
+    queue.state.status='paused';queue.save();return emitUploadBatchState('paused',{error:result.message || ''});
+  }
   if (result.code === "suno_login_required") {
     queue.updateItem(item.id, {
       status: "waiting_login",
@@ -3310,10 +3524,24 @@ ipcMain.handle("upload:batch-save", async (_event, payload = {}) => {
   return { ok: true, queue: snapshot };
 });
 
-ipcMain.handle("upload:batch-start", async (_event, payload = {}) => {
-  if (currentJob) return { ok: false, message: "已有任务正在运行" };
-  const license = await requireActiveLicense("suno_upload", "批量上传 Suno", { forceOnline: true });
-  if (!license.ok) return license;
+async function prepareUploadBatchStart(message, action) {
+  if (currentJob || sunoOperation || isUploadBatchActive()) return { ok: false, message: "已有任务正在运行" };
+  uploadRequestEpoch++;
+  const preparation=createUploadPreparation();
+  sunoOperation=true;activeUploadPreparation=preparation;
+  try {
+    const license=await preparation.wait(requireActiveLicense('suno_upload',message,{forceOnline:true}));
+    preparation.check();
+    if(!license.ok)return license;
+    return await action(preparation);
+  } catch(error) {return {ok:false,code:error.code || 'task_start_failed',message:error.message || '队列准备失败，请重试。'};}
+  finally {
+    preparation.dispose();
+    if(activeUploadPreparation===preparation){activeUploadPreparation=null;sunoOperation=false;}
+  }
+}
+
+ipcMain.handle("upload:batch-start", async (_event, payload = {}) => prepareUploadBatchStart('批量上传 Suno',async preparation=>{
   const queue = getUploadBatchQueue();
   if (Array.isArray(payload.items)) {
     const items = validBatchItems(payload.items);
@@ -3332,13 +3560,13 @@ ipcMain.handle("upload:batch-start", async (_event, payload = {}) => {
   if (!queue.nextPending()) return { ok: false, message: "队列中没有等待上传的歌曲。" };
   queue.updateQueue({ status: "running", pauseRequested: false, currentItemId: "" });
   emitUploadBatchState("started");
-  setImmediate(() => startNextUploadBatchItem().catch((error) => {
-    writeLog(`批量上传启动失败: ${error.message || error}`, "error");
-  }));
+  await startNextUploadBatchItem(preparation);
   return { ok: true, queue: uploadBatchSnapshot() };
-});
+}));
 
 ipcMain.handle("upload:batch-pause", async () => {
+  uploadRequestEpoch++;
+  if(!currentJob)activeUploadPreparation?.cancel();
   const queue = getUploadBatchQueue();
   clearUploadBatchAdvanceTimer();
   if (currentJob?._batchItemId) {
@@ -3350,11 +3578,8 @@ ipcMain.handle("upload:batch-pause", async () => {
   return { ok: true, queue: uploadBatchSnapshot() };
 });
 
-ipcMain.handle("upload:batch-resume", async () => {
+ipcMain.handle("upload:batch-resume", async () => prepareUploadBatchStart('继续批量上传 Suno',async preparation=>{
   const queue = getUploadBatchQueue();
-  if (currentJob) return { ok: false, message: "已有任务正在运行" };
-  const license = await requireActiveLicense("suno_upload", "继续批量上传 Suno", { forceOnline: true });
-  if (!license.ok) return license;
   const waiting = queue.state.items.find((item) => item.status === "waiting_login");
   if (waiting) {
     queue.updateItem(waiting.id, { status: "pending", progress: 0, message: "等待重新上传", error: "" }, false);
@@ -3362,9 +3587,9 @@ ipcMain.handle("upload:batch-resume", async () => {
   if (!queue.nextPending()) return { ok: false, message: "队列中没有可以继续的歌曲。" };
   queue.updateQueue({ status: "running", pauseRequested: false, currentItemId: "" });
   emitUploadBatchState("resumed");
-  setImmediate(() => startNextUploadBatchItem().catch(() => {}));
+  await startNextUploadBatchItem(preparation);
   return { ok: true, queue: uploadBatchSnapshot() };
-});
+}));
 
 ipcMain.handle("upload:batch-retry-item", async (_event, payload = {}) => {
   const queue = getUploadBatchQueue();
@@ -3377,6 +3602,8 @@ ipcMain.handle("upload:batch-retry-item", async (_event, payload = {}) => {
 });
 
 ipcMain.handle("upload:batch-cancel", async () => {
+  uploadRequestEpoch++;
+  activeUploadPreparation?.cancel();
   const queue = getUploadBatchQueue();
   clearUploadBatchAdvanceTimer();
   queue.state.status = "cancelled";
@@ -3417,6 +3644,8 @@ ipcMain.handle("upload:clear-segments", async (_event, payload = {}) => {
 });
 
 ipcMain.handle("job:stop", async () => {
+  uploadRequestEpoch++;
+  activeUploadPreparation?.cancel();
   if (!currentJob) return { ok: true };
   const job = currentJob;
   uploadStopRequested = true;
@@ -3450,16 +3679,25 @@ ipcMain.handle("lyrics:process", async (_event, payload) => {
 });
 
 ipcMain.handle("license:check", async () => {
-  // 内部使用版：授权恒为永久有效
-  return { ok: true, valid: true, is_permanent: true, permanent: true, reason_code: "internal_permanent", reason: "内部使用版 · 已解锁" };
+  const accountProfile = await getAccountProfile({ forceOnline: true });
+  const status = accountProfileToLicenseStatus(accountProfile);
+  if (status.valid) rememberLicenseSession(status, true);
+  else clearLicenseSessionCache(status.reason_code || "account-invalid");
+  return status;
 });
 ipcMain.handle("license:status", async () => {
-  // 内部使用版：授权恒为永久有效
-  return { ok: true, valid: true, is_permanent: true, permanent: true, reason_code: "internal_permanent", reason: "内部使用版 · 已解锁" };
+  const accountProfile = await getAccountProfile();
+  const status = accountProfileToLicenseStatus(accountProfile);
+  if (status.valid) rememberLicenseSession(status, true);
+  else clearLicenseSessionCache(status.reason_code || "account-invalid");
+  return status;
 });
 ipcMain.handle("license:startup-verify", async () => {
-  // 内部使用版：授权恒为永久有效
-  return { ok: true, valid: true, is_permanent: true, permanent: true, reason_code: "internal_permanent", reason: "内部使用版 · 已解锁" };
+  const accountProfile = await getAccountProfile({ forceOnline: true });
+  const status = accountProfileToLicenseStatus(accountProfile);
+  if (status.valid) rememberLicenseSession(status, true);
+  else clearLicenseSessionCache(status.reason_code || "account-invalid");
+  return status;
 });
 ipcMain.handle("account:login", () => startAccountLogin());
 ipcMain.handle("account:submit-login", (event, payload) => submitAccountLogin(event, payload));
@@ -3507,11 +3745,11 @@ ipcMain.handle("account:logout", async () => {
   }
 });
 ipcMain.handle("account:open-profile", async () => {
-  await openAccountPortal("/account", "期音科技个人中心");
+  await openAccountPortal("/account", "告白悸风个人中心");
   return { ok: true };
 });
 ipcMain.handle("account:open-store", async () => {
-  await openAccountPortal("/store", "期音科技软件商城");
+  await openAccountPortal("/store", "告白悸风软件商城");
   return { ok: true };
 });
 ipcMain.handle("app:register", async () => runBackendJson(["--app-register"]));
@@ -3790,7 +4028,7 @@ function downloadGpuRuntimeArchive(url, targetPath, redirectCount = 0) {
     const existing = fs.existsSync(partPath) ? fs.statSync(partPath).size : 0;
     const parsed = new URL(url);
     const lib = parsed.protocol === "http:" ? http : https;
-    const headers = { "User-Agent": "QiyinSunoUploader/5.0.0" };
+    const headers = { "User-Agent": "GaobaiSunoUploader/5.0.4" };
     if (existing > 0) headers.Range = `bytes=${existing}-`;
     const req = lib.get(url, { headers }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < 6) {
@@ -4051,7 +4289,7 @@ function requestText(url, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const lib = parsed.protocol === "http:" ? http : https;
-    const req = lib.get(url, { headers: { "User-Agent": "QiyinSunoUploader/5.0.0" } }, (res) => {
+    const req = lib.get(url, { headers: { "User-Agent": "GaobaiSunoUploader/5.0.4" } }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < 5) {
         res.resume();
         resolve(requestText(new URL(res.headers.location, url).toString(), redirectCount + 1));
@@ -4091,7 +4329,7 @@ function downloadFileWithResume(url, targetPath, sourceName, filename) {
     const existing = fs.existsSync(partPath) ? fs.statSync(partPath).size : 0;
     const parsed = new URL(url);
     const lib = parsed.protocol === "http:" ? http : https;
-    const headers = { "User-Agent": "QiyinSunoUploader/5.0.0" };
+    const headers = { "User-Agent": "GaobaiSunoUploader/5.0.4" };
     if (existing > 0) headers.Range = `bytes=${existing}-`;
 
     const req = lib.get(url, { headers }, (res) => {
@@ -4592,10 +4830,8 @@ ipcMain.handle("editor:export", async (_event, payload) => {
   fs.mkdirSync(outputDir, { recursive: true });
 
   const totalSemitones = pitchSemitones + pitchCents / 100;
-  const needTransform = Math.abs(totalSemitones) > 0.001 || tempoRatio !== 1;
-  const useEditorWorker = needTransform || segments.length > 1;
-
-  if (useEditorWorker) {
+  // Every export enters the independently licensed worker, including simple cuts.
+  {
     const spec = pythonScriptExecutable("audio_editor");
     const args = [
       ...spec.prefixArgs,
@@ -4657,46 +4893,6 @@ ipcMain.handle("editor:export", async (_event, payload) => {
     });
   }
 
-  const filters = [`volume=${volume.toFixed(3)}`];
-  if (fadeIn > 0) filters.push(`afade=t=in:st=0:d=${fadeIn.toFixed(3)}`);
-  if (fadeOut > 0) filters.push(`afade=t=out:st=${Math.max(0, duration - fadeOut).toFixed(3)}:d=${fadeOut.toFixed(3)}`);
-
-  const args = [
-    "-y",
-    "-ss", start.toFixed(3),
-    "-t", duration.toFixed(3),
-    "-i", payload.sourcePath,
-    "-af", filters.join(","),
-    "-c:a", "pcm_s16le",
-    outputPath
-  ];
-
-  return new Promise((resolve) => {
-    send("editor:event", { type: "status", message: "正在剪辑音频", progress: 15 });
-    editorJob = spawn(ffmpegExecutable(), args, {
-      cwd: projectRoot(),
-      env: backendEnv(),
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true
-    });
-    let stderr = "";
-    editorJob.stderr.setEncoding("utf8");
-    editorJob.stderr.on("data", (text) => { stderr += text; });
-    editorJob.on("error", (error) => {
-      editorJob = null;
-      resolve({ ok: false, message: error.message });
-    });
-    editorJob.on("close", (code) => {
-      editorJob = null;
-      if (code !== 0 || !fs.existsSync(outputPath)) {
-        resolve({ ok: false, message: stderr.trim() || `ffmpeg exited ${code}` });
-        return;
-      }
-      send("editor:event", { type: "status", message: "剪辑处理完成", progress: 100 });
-      resolve({ ok: true, outputPath, outputDir, start, end, duration });
-    });
-  });
 });
 
 ipcMain.handle("editor:export-project", async (_event, payload = {}) => {
@@ -4838,8 +5034,9 @@ ipcMain.handle("editor:cancel", async () => {
 });
 
 ipcMain.handle("open:url", async (_event, url) => {
-  if (!url) return { ok: false };
-  await shell.openExternal(url);
+  const target = safeExternalUrl(url);
+  if (!target) return { ok: false, message: "仅支持打开 HTTP 或 HTTPS 网页链接。" };
+  await shell.openExternal(target);
   return { ok: true };
 });
 

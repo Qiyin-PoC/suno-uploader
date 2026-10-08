@@ -1,93 +1,113 @@
-# Suno 歌曲上传器（期音科技 · 内部使用版）
+# Suno 歌曲上传器 V5.0.4
 
-> ⚠️ **请勿传播 · 仅内部使用**
+本项目仅保留三个业务板块，并直接采用 `悸风喵核 Studio 5.0.4` 对应实现：
 
-期音科技内部使用的 Suno 音频工具：浏览器自动登录、音频切片拼接上传、批量排队、歌词处理、
-歌曲下载、上传历史、多账号。**无需官网账号、无需激活码、无软件授权锁。**
+1. **Suno 歌曲上传**：切片拼接、单曲/批量上传、稳定/快速模式、歌词处理、多账号。
+2. **上传历史**：记录、搜索、过滤、统计与清理。
+3. **Suno 歌曲下载**：MP3 / WAV，支持每批最多 100 条链接。
 
-## 功能
+## 5.0.4 更新
 
-### 上传
-- 浏览器自动登录 Suno（CDP，打开浏览器完成登录后自动抓取 token）
-- 多账号：3 个账号槽位独立登录、切换
-- 浏览器拓展登录（Chrome/Edge 插件 + 一次性配对码，解耦 CDP）
-- 音频切片拼接上传（本地低能量切点算法 + ffmpeg，突破 Suno 约 2 分钟限制）
-- 单曲上传 / 批量排队上传（双模式），失败自动跳过继续、断点续传
-- 稳定上传提速（3→4 路并发 + 大切片）
-- 歌词处理：中文同音替换 / 转拼音 / 粤语转粤拼 / 英语发音 / 韩语罗马音 / 泰语罗马音
-- 实时进度、切片统计、ETA 倒计时、运行日志
+- 官网账号与软件权益重新闭环。
+- Ed25519 短时 `ExecutionGrant`。
+- 上传/下载独立任务授权与 loopback capability broker。
+- Suno 浏览器扩展协议 2：约 30 秒刷新、浏览器/软件重启恢复、休眠恢复、账号绑定、防旧 token 覆盖。
+- 45 秒上传准备 deadline、`AbortSignal`、准备阶段取消、后端慢启动提示和超时终止。
+- IPC sender/main frame 校验、导航/webview/window.open 防护、HTTP(S) 外链过滤、CSP。
+- Worker SHA-256 完整性校验与 JWT 日志脱敏。
 
-### 下载
-- Suno 歌曲下载：MP3 / WAV / **原始源 m4a（保留 Opus 编码，音质最好）**
-- 批量下载（每行一个链接，最多 100 首）
+## 运行要求
 
-### 其它
-- 上传历史：记录 / 搜索 / 过滤 / 统计 / 管理
-- 稳定基建：单例锁、心跳看门狗、日志落盘、优雅停止
+- Windows 10/11 x64。
+- 正常联网。
+- 有效的官网账号及对应软件权益。
+- Chrome 或 Edge 120+（使用扩展协议 2 时）。
+- 最终免安装包不需要安装 Node.js、Python 或 ffmpeg。
 
-## 目录结构
+## 源码与运行组件
 
+```text
+electron/              Electron 31.7.7 主进程、preload 和 renderer
+backend/               5.0.4 上传与下载 worker EXE
+vendor/ffmpeg/         内置 ffmpeg
+suno-login-extension/  5.0.4 / protocol 2 浏览器扩展
+assets/                运行图标与界面资源
+scripts/               发布一致性检查
+tests/                 安全、任务授权、队列和打包界面测试
 ```
-electron/              Electron 外壳（main.js 主进程 + preload.js + renderer/ 界面）
-backend/               Python 后端（切片、歌词、上传、下载、多账号）
-python-embed/          内置 Python 3.12（运行下载/其它脚本）
-vendor/ffmpeg/         内置 ffmpeg（切片/转码用）
-suno-login-extension/  浏览器拓展（扩展登录用）
-assets/                图标与吉祥物
-```
 
-## 环境要求
+正式包使用与 5.0.4 manifest 匹配的：
 
-- Windows 10/11
-- Node.js ≥ 18（仅源码运行/打包时需要；打包产物无需）
+- `backend/backend.exe`
+- `backend/suno_download_cli.exe`
 
-## 运行（源码方式）
+## 安装依赖
 
-```bash
+```powershell
 npm install
-npm start        # 用内置 python-embed 运行，无需另装 Python
 ```
 
-## 打包成桌面程序
+项目锁定 Electron `31.7.7`，与对标程序实际运行时一致。
 
-```bash
-npm run pack     # 生成 dist/win-unpacked/Suno歌曲上传器.exe（免安装绿色版）
-npm run dist     # 生成安装包
+## 检查和测试
+
+```powershell
+npm run check
+npm test
 ```
 
-打包产物自带 Python + ffmpeg，可直接拷贝到其它机器运行，无需装任何依赖。
+`npm run check` 会验证：
+
+- 版本与 Electron 运行时；
+- 17 个直接复用的 5.0.4 源文件 SHA-256；
+- 协议 2 扩展文件 SHA-256；
+- 上传/下载 worker 与 manifest；
+- 侧栏严格只有上传、下载、历史；
+- CSP、MP3/WAV 选项和 JavaScript 语法。
+
+## 构建免安装版
+
+```powershell
+npm run pack   # dist/win-unpacked
+npm run dist   # dist/Suno歌曲上传器-V5.0.4-免安装版.zip
+```
+
+ZIP 是正式免安装交付：完整解压后运行 `Suno歌曲上传器.exe`，不要只复制主 EXE。浏览器扩展位于解压目录的 `resources/suno-login-extension`。
 
 ## 使用步骤
 
-### 1. 登录 Suno
+### 1. 登录官网账号
 
-- 方式一（CDP）：点「登录 Suno」→ 在弹出的浏览器里登录你的 Suno 账号，登录态自动抓取。
-- 方式二（拓展登录）：点「扩展登录」→ 按提示安装 `suno-login-extension` 插件 → 在浏览器登录 Suno → 粘贴配对码回传。
+打开左下角账号菜单，登录官网账号并完成软件权益验证。上传、下载任务会获取短时 ExecutionGrant 和独立任务租约。
 
-### 2. 上传
+### 2. 连接 Suno
 
-1. 选择音频（单曲或批量拖入）
-2. 选上传模式（稳定上传 / 快速上传）
-3. 点「上传到 Suno」
+- 选择账号 1/2/3。
+- 点击扩展登录。
+- 在 Chrome/Edge 中加载 `resources/suno-login-extension`。
+- 输入配对码并保持原 Suno 账号页面可访问。
 
-### 3. 下载
+扩展协议 2 会自动刷新连接，并在浏览器、软件重启或系统休眠后尝试恢复。
 
-1. 切到「歌曲下载」板块
-2. 粘贴 Suno 歌曲链接（每行一个）
-3. 选格式（MP3 / WAV / 原始源 m4a）
-4. 点「开始下载」
+### 3. 上传
+
+选择单曲或批量音频，设置速度与歌词后开始上传。暂停或取消可终止尚未完成的准备阶段和上传 worker。
+
+### 4. 下载
+
+进入“Suno歌曲下载”，每行粘贴一个链接，选择 MP3 或 WAV，然后开始下载。
 
 ## 数据位置
 
-数据（token / 上传历史 / 切片工作目录 / 日志）保存在：
+应用名称和数据协议与 5.0.4 对齐，默认数据目录：
 
+```text
+%APPDATA%\悸风喵核 Studio
 ```
-%APPDATA%\Suno歌曲上传器
-```
 
-## 说明与合规
+## 合规说明
 
-- 上传走 Suno 官方接口，用你自己的账号，消耗你自己的积分。
-- 下载走 Suno 公开音频源；**请在你有权使用的范围内使用**。
-- 本工具为内部使用版，请遵守 Suno 服务条款，仅处理你拥有权利或已获授权的音频。
-- **请勿传播 · 仅内部使用**
+- 上传、下载均使用登录账号对应的服务权限。
+- 请遵守 Suno 服务条款和相关版权规定。
+- 只处理本人拥有权利或已经获得授权的音频。
+- 商业授权声明以应用内及 5.0.4 随附说明为准。

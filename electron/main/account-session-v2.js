@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 const { promisify } = require("util");
+const { ExecutionGrant } = require("./execution-grant");
 
 const execFileAsync = promisify(execFile);
 const DEVICE_HASH_PREFIX = "jfmhstudio:v2:";
@@ -76,17 +77,18 @@ function activeEntitlement(entitlement) {
   if (!entitlement || typeof entitlement !== "object") return false;
   if (Object.keys(entitlement).length === 0) return false;
   if (entitlement.status && !["active", "valid", "enabled"].includes(String(entitlement.status).toLowerCase())) return false;
-  if (entitlement.is_permanent || entitlement.is_lifetime) return true;
+  if (entitlement.is_permanent === true || entitlement.is_lifetime === true) return true;
   const expiresAt = entitlement.expires_at || entitlement.expire_at || null;
-  if (!expiresAt) return true;
+  if (!expiresAt) return false;
   const expiresMs = parseServerTime(expiresAt);
-  return !Number.isFinite(expiresMs) || expiresMs > Date.now();
+  return Number.isFinite(expiresMs) && expiresMs > Date.now();
 }
 
 function requestJson(baseUrl, pathname, options = {}) {
   const bodyBuffer = options.body ? Buffer.from(JSON.stringify(options.body), "utf8") : null;
   const timeoutMs = Number(options.timeoutMs || 3000);
   return new Promise((resolve, reject) => {
+    let deadline;
     const request = https.request(`${baseUrl}${pathname}`, {
       method: options.method || "GET",
       headers: {
@@ -96,9 +98,18 @@ function requestJson(baseUrl, pathname, options = {}) {
       },
     }, (response) => {
       let text = "";
+      let bytes = 0;
       response.setEncoding("utf8");
-      response.on("data", (chunk) => { text += chunk; });
+      response.on("data", (chunk) => {
+        bytes += Buffer.byteLength(chunk, "utf8");
+        if (options.maxResponseBytes && bytes > options.maxResponseBytes) {
+          response.destroy(); request.destroy(new Error("response_too_large")); return;
+        }
+        text += chunk;
+      });
+      response.on("error", (error) => { clearTimeout(deadline); reject(error); });
       response.on("end", () => {
+        clearTimeout(deadline);
         let body = {};
         try { body = text ? JSON.parse(text) : {}; } catch (_) { body = { message: text }; }
         resolve({
@@ -108,8 +119,9 @@ function requestJson(baseUrl, pathname, options = {}) {
         });
       });
     });
+    if (options.absoluteTimeout) deadline = setTimeout(() => request.destroy(new Error("request_timeout")), timeoutMs);
     request.setTimeout(timeoutMs, () => request.destroy(new Error("request_timeout")));
-    request.on("error", reject);
+    request.on("error", (error) => { clearTimeout(deadline); reject(error); });
     if (bodyBuffer) request.write(bodyBuffer);
     request.end();
   });
@@ -172,6 +184,8 @@ class AccountSessionV2 {
     this.heartbeatTimer = null;
     this.heartbeatInFlight = null;
     this.initializePromise = null;
+    this.executionGrant = new ExecutionGrant(this.app.getPath("userData"));
+    this.executionRequested = false;
   }
 
   readEncrypted(filePath) {
@@ -203,6 +217,8 @@ class AccountSessionV2 {
   }
 
   clearSession() {
+    this.executionGrant.clear();
+    this.executionRequested = false;
     this.session = null;
     try { fs.unlinkSync(this.authFile); } catch (_) {}
   }
@@ -317,6 +333,7 @@ class AccountSessionV2 {
   async initialize() {
     if (this.initializePromise) return this.initializePromise;
     this.initializePromise = (async () => {
+      this.executionGrant.clear();
       await this.getDevice();
       this.session = this.loadSession();
       if (!this.session) return this.publicState();
@@ -357,6 +374,7 @@ class AccountSessionV2 {
       };
     }
     this.stopHeartbeat();
+    this.executionGrant.clear();
     this.session = parseLoginSession(response.body, device);
     this.failureCount = 0;
     this.connectionStatus = "online";
@@ -398,14 +416,23 @@ class AccountSessionV2 {
     if (!this.session) return { ok: false, reason_code: "account_not_logged_in" };
     if (this.heartbeatInFlight) return this.heartbeatInFlight;
     this.heartbeatInFlight = (async () => {
+      const current = this.session;
+      const requestGrant = this.executionRequested && !this.executionGrant.usable(current, 300);
       try {
         const response = await this.request(this.apiBase, "/session/heartbeat", {
           method: "POST",
           timeoutMs: 3000,
-          token: this.session.session_token,
-          body: { session_id: this.session.session_id, device_id: this.session.device_id },
+          token: current.session_token,
+          body: { session_id: current.session_id, device_id: current.device_id,
+            ...(requestGrant ? {execution_grant:true} : {}) },
         });
+        if (this.session !== current) return {ok:false, reason_code:"session_changed"};
         if (response.ok) {
+          if (requestGrant) {
+            const grant = unwrapPayload(response.body).execution_grant;
+            if (!grant) throw new Error("execution_grant_missing");
+            this.executionGrant.accept(grant, current);
+          }
           this.failureCount = 0;
           this.connectionStatus = "online";
           this.reasonCode = "account_entitlement_valid";
@@ -420,6 +447,7 @@ class AccountSessionV2 {
         }
         this.failureCount += 1;
       } catch (error) {
+        if (this.session !== current) return {ok:false, reason_code:"session_changed"};
         this.failureCount += 1;
         this.log(`V2 heartbeat failed (${this.failureCount}): ${error.message || error}`, "warn");
       }
@@ -434,6 +462,47 @@ class AccountSessionV2 {
       return { ok: false, reason_code: this.reasonCode, failures: this.failureCount };
     })().finally(() => { this.heartbeatInFlight = null; });
     return this.heartbeatInFlight;
+  }
+
+  async ensureExecutionGrant(feature) {
+    if (!this.session || this.connectionStatus === "blocked") return {ok:false, reason_code:"account_not_logged_in"};
+    this.executionRequested = true;
+    if (!this.executionGrant.usable(this.session, 30, feature)) {
+      // An existing heartbeat may have started before a paid action requested a grant.
+      if (this.heartbeatInFlight) await this.heartbeatInFlight;
+      if (!this.executionGrant.usable(this.session, 30, feature)) await this.heartbeat();
+    }
+    return this.executionGrant.usable(this.session, 0, feature)
+      ? {ok:true} : {ok:false, reason_code:"execution_grant_required", message:"功能授权暂时无法验证，请联网并重新登录官网账号后重试。"};
+  }
+
+  taskAuthorizationSession() {
+    return this.session?.session_id && this.session?.session_token && this.session?.device_id &&
+      this.connectionStatus !== "blocked" ? this.session : null;
+  }
+
+  async requestExecutionTask(current, body) {
+    if (!current || this.taskAuthorizationSession() !== current) return { ok: false, status: 401, reason_code: "session_changed" };
+    // Only the main process selects the HTTPS website and supplies its session
+    // token. Neither the native child nor the loopback request can override them.
+    const endpoint = new URL(this.apiBase);
+    if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password) return { ok: false, status: 503, reason_code: "task_endpoint_invalid" };
+    try {
+      const response = await this.request(this.apiBase, "/execution/task", {
+        method: "POST", timeoutMs: 6000, absoluteTimeout: true, maxResponseBytes: 16384,
+        token: current.session_token,
+        body: { ...body, session_id: current.session_id, device_id: current.device_id },
+      });
+      if (this.taskAuthorizationSession() !== current) return { ok: false, status: 401, reason_code: "session_changed" };
+      const payload = unwrapPayload(response.body);
+      if (response.ok && payload.ok !== false) return { ok: true, task_grant: payload.task_grant, released: payload.released };
+      const reason = apiReason(payload, "task_authorization_denied");
+      if (response.status === 401 || TERMINAL_REASONS.has(reason)) this.block(reason, true);
+      return { ok: false, status: response.status || 503, reason_code: reason,
+        message: response.status === 429 ? "正在处理的任务较多，请稍后重试。" : "任务授权未通过，请检查官网账号权益或重新登录。" };
+    } catch {
+      return { ok: false, status: 503, reason_code: "task_service_unavailable", message: "任务授权连接暂时不可用，请检查网络后重试。" };
+    }
   }
 
   scheduleHeartbeat() {
@@ -464,6 +533,7 @@ class AccountSessionV2 {
           token: current.session_token,
           body: { session_id: current.session_id, device_id: current.device_id },
         });
+        if (this.session !== current) return {ok: false, reason_code: "session_changed"};
         if (!response.ok && ![401, 403].includes(response.status)) {
           const reason = apiReason(response.body, "session_service_unavailable");
           this.connectionStatus = "reconnecting";
@@ -473,6 +543,7 @@ class AccountSessionV2 {
           return { ok: false, reason_code: reason, message: response.body?.message || "Logout failed" };
         }
       } catch (error) {
+        if (this.session !== current) return {ok: false, reason_code: "session_changed"};
         this.log(`V2 logout request failed: ${error.message || error}`, "warn");
         this.connectionStatus = "reconnecting";
         this.reasonCode = "session_service_unavailable";
@@ -491,10 +562,12 @@ class AccountSessionV2 {
 
   async listDevices() {
     if (!this.session) return { ok: false, reason_code: "account_not_logged_in" };
-    const response = await this.request(this.apiBase, `/devices?session_id=${encodeURIComponent(this.session.session_id)}`, {
-      token: this.session.session_token,
+    const current = this.session;
+    const response = await this.request(this.apiBase, `/devices?session_id=${encodeURIComponent(current.session_id)}`, {
+      token: current.session_token,
       timeoutMs: 3000,
     });
+    if (this.session !== current) return {ok: false, reason_code: "session_changed"};
     if (!response.ok) {
       const reason = apiReason(response.body, "session_service_unavailable");
       if ([401, 403].includes(response.status)) this.block(reason, true);
@@ -509,14 +582,16 @@ class AccountSessionV2 {
 
   async unbindDevice(devicePublicId) {
     if (!this.session) return { ok: false, reason_code: "account_not_logged_in" };
+    const current = this.session;
     const safeId = encodeURIComponent(String(devicePublicId || "").trim());
     if (!safeId) return { ok: false, reason_code: "invalid_device" };
     const response = await this.request(this.apiBase, `/devices/${safeId}/unbind`, {
       method: "POST",
-      token: this.session.session_token,
+      token: current.session_token,
       timeoutMs: 3000,
-      body: { session_id: this.session.session_id },
+      body: { session_id: current.session_id },
     });
+    if (this.session !== current) return {ok: false, reason_code: "session_changed"};
     if (!response.ok) {
       const reason = apiReason(response.body, "session_service_unavailable");
       if ([401, 403].includes(response.status)) this.block(reason, true);

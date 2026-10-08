@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("gaobai", {
   getSunoDownloadState: () => ipcRenderer.invoke("suno-download:state"),
@@ -176,13 +176,4 @@ contextBridge.exposeInMainWorld("converter", {
     ipcRenderer.on("unlocker:event", listener);
     return () => ipcRenderer.removeListener("unlocker:event", listener);
   }
-});
-
-// Electron 32+ 移除了 File.path，改用 webUtils.getPathForFile 获取拖入文件的真实路径
-contextBridge.exposeInMainWorld("getPathForFile", (file) => {
-  try {
-    if (!file) return "";
-    if (typeof webUtils?.getPathForFile === "function") return webUtils.getPathForFile(file);
-  } catch (_) {}
-  return (file && file.path) || "";
 });

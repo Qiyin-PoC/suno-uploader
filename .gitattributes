@@ -1,0 +1,20 @@
+*.js text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.py text eol=lf
+*.exe binary
+*.dll binary
+*.wasm binary
+*.png binary
+*.jpg binary
+
+# 5.0.4 对标源码按原始字节保存，避免 Git 换行转换破坏基线 SHA-256。
+electron/main/*.js -text whitespace=cr-at-eol
+electron/main/*.json -text whitespace=cr-at-eol
+electron/renderer/*.js -text whitespace=cr-at-eol
+electron/renderer/*.html -text whitespace=cr-at-eol
+electron/renderer/*.css -text whitespace=cr-at-eol
+suno-login-extension/* -text whitespace=cr-at-eol
