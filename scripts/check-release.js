@@ -15,7 +15,7 @@ if (pkg.version !== "5.0.4") fail(`package 版本应为 5.0.4，实际为 ${pkg.
 if (pkg.devDependencies?.electron !== "31.7.7") fail("Electron 必须与对标软件一致为 31.7.7");
 
 const sourceBaseline = {
-  "electron/main/account-session-v2.js": "65ff62fd5337d1cae50aef8166ba748996d63f27ddb8e6866dd6977774c5437e",
+  "electron/main/account-session-v2.js": "859a404908189f45c34b7d12a9b89045611d63cbea8e266dfb1b1d49874ebfc9",
   "electron/main/suno-accounts.js": "7177ea05bf4c16b6ac1d52d6c7d3be023fd408102bde468996c6a482c711465a",
   "electron/main/execution-grant.js": "bfd25524e18a51b8da1cb0123cfacc7e3f9cdb82af1d90511f1ab70cf3a6c40f",
   "electron/main/legal-notice.js": "dc213dd04be0a5063046dd050c9179abd5a6e59d8858336d3d8efc8156a7b4cd",
@@ -32,19 +32,25 @@ for (const [relative, expected] of Object.entries(sourceBaseline)) {
 }
 
 const internalRuntimeBaseline = {
-  "electron/main/main.js": "bd3d974a56f613ce2a114b1ae18192ea8fae0b31b3ec0c7b46c6fdc716c449ce",
+  "electron/main/main.js": "f09ab66c9a8afc9065917eb8278420276019b2cbecf1c01cb3dfb1a8b3784256",
   "electron/main/suno-download.js": "56b7cc3e7c2124cf96846e9d6643d7b0d5e090686c2b266cfee9bca196da0d05",
   "electron/main/suno-download-batch.js": "9b0c79144af5519e631f93d53ea0144c78f3e1550a62569cce9cb7129f07a9c6",
   "electron/main/backend-process.js": "b611deb0265ab1c8ec51c9d73c691926a4bcdab841024048d62b9acc2a8b2e18",
   "backend/backend.py": "0837b5d0ecaba0d2a21f651bd33445650e73bd0057c6b4bfa85381e94fdc45e7",
-  "backend/suno_download_cli.py": "713a962ac44b3088c38a0c718e3fc146451219cc64aaab6809b5feb4dbd5756c",
+  "backend/suno_download_cli.py": "e0a5a2b1eb53a29bcfbce521dd308eac8493da5d316fb29868bc73beba05e93f",
   "backend/suno_download_jobs.py": "a3118a24a584ee401730f70e72eff4cf0b91fdb3258c77adb7392d3fbb501b9a",
   "python-embed/python.exe": "4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a"
 };
 const newlinePortableFiles = new Set(["backend/backend.py", "backend/suno_download_jobs.py"]);
+// python-embed/python.exe 是 Windows 专用运行时；macOS 上同一路径是本机转发脚本，
+// 哈希必然与基线不同。该条目只在 Windows 校验哈希；存在性仍需满足，因为下面的
+// CLI 完整性检查会通过它执行 backend。
+const windowsOnlyRuntimeFiles = new Set(["python-embed/python.exe"]);
 for (const [relative, expected] of Object.entries(internalRuntimeBaseline)) {
   if (!fs.existsSync(path.join(root, relative))) fail(`缺少内部免授权运行文件 ${relative}`);
-  else {
+  else if (windowsOnlyRuntimeFiles.has(relative) && process.platform !== "win32") {
+    console.log(`跳过 ${relative} 的哈希校验（当前平台不是 Windows）`);
+  } else {
     const actual = newlinePortableFiles.has(relative) ? sha256NormalizedText(relative) : sha256(relative);
     if (actual !== expected) fail(`${relative} 偏离已验证的内部免授权运行基线`);
   }
@@ -61,7 +67,7 @@ const qiyinUiBaseline = {
   "electron/renderer/styles.css": "0bf0a411975ffe074fb8312d8112b944779adbe0ba79072410d4b7c4b7fe7e79",
   "electron/renderer/suno-accounts.js": "afb1bcc5a20c97fd95070f41ec7a5cc3d473db71a29fe63d743b12f1661892b4",
   "electron/renderer/suno-download.css": "cfc91b35901f286c2db8c21e3b9e6514efc135b7d0eaa93e73bfab102c245a3c",
-  "electron/renderer/suno-download.js": "4cbc11e3d871d2f98622f4913b901e1dde6d40953c994fd2d17b7632576cccf5"
+  "electron/renderer/suno-download.js": "6caa0d9ef143e3591327e2cb5c463c5a0ad21d0508469a10f7262997fd6d65a5"
 };
 for (const [relative, expected] of Object.entries(qiyinUiBaseline)) {
   if (!fs.existsSync(path.join(root, relative))) fail(`缺少期音 UI 文件 ${relative}`);
@@ -81,10 +87,15 @@ for (const [relative, expected] of Object.entries(extensionBaseline)) {
 }
 
 const workerManifest = JSON.parse(read("electron/main/worker-manifest.json").toString("utf8"));
-for (const name of ["backend.exe", "suno_download_cli.exe"]) {
-  const relative = `backend/${name}`;
-  if (!fs.existsSync(path.join(root, relative))) fail(`缺少参考 worker ${relative}`);
-  else if (sha256(relative) !== workerManifest.workers[name]) fail(`${name} 与 worker manifest 不匹配`);
+if (process.platform === "win32") {
+  for (const name of ["backend.exe", "suno_download_cli.exe"]) {
+    const relative = `backend/${name}`;
+    if (!fs.existsSync(path.join(root, relative))) fail(`缺少参考 worker ${relative}`);
+    else if (sha256(relative) !== workerManifest.workers[name]) fail(`${name} 与 worker manifest 不匹配`);
+  }
+} else {
+  // 这两个 worker 属于 Windows 免安装包，随 Release 发布：不在仓库，也不由 macOS 构建产生。
+  console.log("跳过 Windows 参考 worker 校验（当前平台不产生 backend/*.exe）");
 }
 const embeddedPython = path.join(root, "python-embed", "python.exe");
 const uploadHelp = spawnSync(embeddedPython, [path.join(root, "backend", "backend.py"), "--help"], { encoding: "utf8" });
