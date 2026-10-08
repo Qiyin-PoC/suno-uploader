@@ -15,7 +15,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(1000)
 
     title = page.title()
-    if "悸风喵核 Studio" not in title:
+    if title != "期音科技 · Suno 歌曲上传器":
         raise AssertionError(f"窗口标题异常：{title}")
 
     nav_panels = page.locator(".nav-item").evaluate_all("els => els.map(el => el.dataset.panel)")
@@ -36,8 +36,14 @@ with sync_playwright() as p:
         if directive not in csp:
             raise AssertionError(f"CSP 缺少：{directive}")
 
-    # 未登录时点击受保护导航必须停留在三板块范围，不能跳到已隐藏的分离模块。
-    page.locator("#activationRequiredModal").evaluate("el => el.classList.add('hidden')")
+    brand = page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()")
+    if brand.lower() != "#7c3aed":
+        raise AssertionError(f"不是原期音紫粉主题：{brand}")
+
+    # 导航必须保持原期音三板块交互。
+    activation_modal = page.locator("#activationRequiredModal")
+    if activation_modal.count():
+        activation_modal.evaluate("el => el.classList.add('hidden')")
     page.locator('[data-panel="downloadPage"]').click(force=True)
     page.wait_for_timeout(200)
     visible_panels = page.locator(".module-page").evaluate_all("els => els.filter(el => getComputedStyle(el).display !== 'none').map(el => el.id)")

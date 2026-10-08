@@ -35,7 +35,7 @@ _ERRORS = {
     "CLOSED": "下载服务已关闭，请重新打开软件。",
     "LICENSE_REQUIRED": "下载组件未就绪，请重新打开软件后重试。",
     "DOWNLOAD_UNAVAILABLE": "下载没有启动，请稍后重试。",
-    "INVALID_FORMAT": "请选择 MP3 或 WAV 格式。",
+    "INVALID_FORMAT": "请选择 MP3、WAV 或 m4a 格式。",
     "INVALID_URL": "请粘贴有效的 Suno 歌曲链接。",
     "UNSUPPORTED_URL": "仅支持 Suno 歌曲链接。",
     "UNSAFE_URL": "该链接无法安全访问，请重新复制 Suno 歌曲链接。",
@@ -389,12 +389,23 @@ class DownloadManager:
             except OSError:
                 raise _JobError("TEMP_FAILED") from None
             if format == "m4a":
-                # 原始源：直接保存解密后的原始音频（不转码，最保真，保留 Suno Opus 编码质量）
-                original_ext = container if container in _DEMUXERS else "m4a"
-                converted = scratch / f"source_original.{original_ext}"
-                shutil.copy(source, converted)
-                self._update(job_id, phase="converting", message="正在保存原始源…",
+                converted = scratch / "converted.m4a"
+                self._update(job_id, phase="converting", message="正在生成 m4a 文件…",
                              progress=None, indeterminate=True)
+                if container in ("m4a", "mp4"):
+                    # 已经是 MP4/M4A 容器时保留原始编码与数据。
+                    shutil.copy(source, converted)
+                else:
+                    # CDN 回退可能返回 MP3/AAC；必须生成真实的 M4A，不能只改扩展名。
+                    args = self._input_args(ffmpeg, source, _DEMUXERS[container])
+                    args += ["-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1"]
+                    if container == "aac":
+                        args += ["-c:a", "copy"]
+                    else:
+                        args += ["-c:a", "aac", "-b:a", "256k"]
+                    args += ["-movflags", "+faststart", "-f", "mp4", "-n", str(converted)]
+                    self._run_ffmpeg(args, cancel_event, job_id, duration,
+                                     converted, "CONVERSION_FAILED")
             else:
                 pcm = scratch / "converted.wav"
                 args = self._input_args(ffmpeg, source, _DEMUXERS[container])

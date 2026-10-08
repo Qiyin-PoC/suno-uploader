@@ -63,7 +63,7 @@ class SunoDownloadController {
     payload = payload || {};
     const url = normalizeSunoUrl(payload.url);
     if (!url) return this.reject("请粘贴有效的 Suno 歌曲链接。", "INVALID_URL");
-    if (!["mp3", "wav"].includes(payload.format)) return this.reject("请选择 MP3 或 WAV。", "INVALID_FORMAT");
+    if (!["mp3", "wav", "m4a"].includes(payload.format)) return this.reject("请选择 MP3、WAV 或原始源。", "INVALID_FORMAT");
     const task = { id: crypto.randomUUID(), child: null, cancelled: false, terminal: null, settled: false };
     task.done = new Promise((resolve) => { task.resolve = resolve; });
     // Reserve before awaiting authorization so double clicks cannot start two children.
@@ -71,7 +71,7 @@ class SunoDownloadController {
     this.publish({ ok: true, taskId: task.id, jobId: "", status: "running", phase: "authorizing",
       running: true, needActivate: false, format: payload.format, filename: "", title: "", errorCode: "", warningMessage: "",
       supportId: "", receivedBytes: 0, totalBytes: null, progress: null, indeterminate: true,
-      message: "正在检查软件权益…" });
+      message: "正在准备下载任务…" });
     try {
       const license = await this.authorize();
       if (task.cancelled || this.closed) return this.finish(task, this.cancelledState());

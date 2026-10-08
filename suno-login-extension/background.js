@@ -73,7 +73,7 @@ async function connect(code) {
   if(!['1','2','3'].includes(connected.accountId))throw new Error('本机连接账号无效。');
   const session=refreshDetails(connected,+match[1],payload.account.userId),reconnect=connected.reconnect;
   if(connected.protocolVersion!==2 || !reconnect || reconnect.port!==+match[1] || reconnect.userId!==payload.account.userId ||
-     !validSecret(reconnect.secret) || !Number.isFinite(reconnect.issuedAt) || reconnect.issuedAt<=0 || reconnect.issuedAt>Date.now()+30000)throw new Error('请将软件和登录助手更新至 5.0.4 后重新配对。');
+     !validSecret(reconnect.secret) || !Number.isFinite(reconnect.issuedAt) || reconnect.issuedAt<=0 || reconnect.issuedAt>Date.now()+30000)throw new Error('请将软件和登录助手更新至最新版后重新配对。');
   const key=REFRESH_PREFIX+connected.accountId;
   watching.get(connected.accountId)?.abort();
   await updateEntry(key,null,async()=>{
