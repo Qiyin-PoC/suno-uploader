@@ -1,3 +1,9 @@
+> **本分支：Mac 免期音账号体验版（2026-10-08 源码交接）**
+>
+> 入口是 `tauri-preview`（Tauri + Python），构建脚本为 `python3 tauri-preview/package_experience_macos.py`。无需期音账号、充值或账号后端，Suno 上传仍需使用者自己的 Suno 登录。详见 [免账号体验版说明](docs/ACCOUNT-FREE-EXPERIENCE.md) 和 [Windows 交接](docs/WINDOWS-HANDOFF.md)。
+>
+> 这是基于 9 月交接版恢复的独立快照，未合并当前 master 的 5.0.4 改动。当前 Mac 包要求 macOS 26+，x64 在 Apple 芯片需 Rosetta；缺少正式签名公证、Windows 真机验收、队列持久化。历史验收见说明，不能视为所有功能在当前环境重新测过。本分支不含安装包、个人凭据、数据库或 Suno 会话。
+
 # 期音 Suno 上传器 · Windows 开发交接
 
 桌面音乐工具：批量上传音频到 Suno、批量下载歌曲、歌词文字转换，以及独立的期音账号授权后端。

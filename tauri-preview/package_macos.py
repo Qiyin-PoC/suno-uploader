@@ -28,5 +28,8 @@ if arch not in binary_info:
     raise SystemExit('Unexpected compiled binary architecture')
 shutil.copy2(binary, stage / binary.name)
 node = os.environ.get('QIYIN_NODE', 'node')
-subprocess.run([node, str(ROOT / 'node_modules/@tauri-apps/cli/tauri.js'), 'bundle', '--target', host, '--bundles', 'app,dmg'], cwd=PREVIEW, check=True)
+bundle_args = [node, str(ROOT / 'node_modules/@tauri-apps/cli/tauri.js'), 'bundle', '--target', host, '--bundles', 'app,dmg']
+if os.environ.get('QIYIN_TAURI_BUNDLE_CONFIG'):
+    bundle_args.extend(['--config', os.environ['QIYIN_TAURI_BUNDLE_CONFIG']])
+subprocess.run(bundle_args, cwd=PREVIEW, check=True)
 print('Preview bundle:', stage / 'bundle')

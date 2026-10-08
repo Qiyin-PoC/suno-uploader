@@ -157,5 +157,12 @@ $('update').onclick=async()=>{try{await invoke('check_update');}catch(e){notice(
   });
   const v=await invoke('info');
   $('build-info').textContent=`v${v.version} · ${v.architecture}`;
+  if(v.freeExperience){
+    $('show-account').hidden=true;
+    document.querySelector('.pill').textContent='免账号体验版';
+    document.querySelector('#suno-login').previousElementSibling.textContent='无需期音账号。上传前请登录你自己的 Suno 账号。';
+    notice(v.runtime?'免账号体验版 · 上传、下载和歌词工具可直接使用':'音频引擎缺失，请重新安装。',!v.runtime);
+    return;
+  }
   notice(v.runtime?(v.localPreview?'本机验证包 · 已内置音频引擎，使用本机测试账号服务。':'音频引擎就绪，请登录期音账号。'):'音频引擎缺失，请重新构建。',!v.runtime);
 })().catch(e=>notice('初始化失败：'+String(e),true));

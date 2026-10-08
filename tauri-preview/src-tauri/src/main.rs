@@ -49,6 +49,10 @@ fn trusted_origin(raw: &str, preview: bool) -> Result<String, String> {
     }
     Ok(u.origin().ascii_serialization())
 }
+fn free_experience() -> bool {
+    option_env!("QIYIN_FREE_EXPERIENCE") == Some("1")
+}
+
 impl Service {
     async fn call(
         &self,
@@ -91,6 +95,7 @@ impl Service {
         Ok(v)
     }
     async fn authorize(&self, core: &Core, feature: &str) -> Result<(), String> {
+        if free_experience() { return Ok(()); }
         if core.token.is_empty() {
             return Err("请先登录期音账号".into());
         }
@@ -122,6 +127,7 @@ async fn account(
     password: Option<String>,
     state: tauri::State<'_, Service>,
 ) -> Result<Value, String> {
+    if free_experience() { return Err("免账号体验版无需期音账号".into()); }
     let mut core = state.core.lock().await;
     match action {
         AccountAction::Login | AccountAction::Register => {
@@ -462,7 +468,7 @@ async fn cancel(state: tauri::State<'_, Service>) -> Result<(), String> {
 }
 #[tauri::command]
 fn info(state: tauri::State<'_, Service>) -> Value {
-    json!({"version":"0.1.0","architecture":std::env::consts::ARCH,"configured":!state.origin.is_empty(),"localPreview":option_env!("QIYIN_LOCAL_PREVIEW")==Some("1"),"runtime":state.runtime.join("qiyin-worker").join(executable("qiyin-worker")).is_file()})
+    json!({"version":"0.1.0","freeExperience":free_experience(),"architecture":std::env::consts::ARCH,"configured":!state.origin.is_empty(),"localPreview":option_env!("QIYIN_LOCAL_PREVIEW")==Some("1"),"runtime":state.runtime.join("qiyin-worker").join(executable("qiyin-worker")).is_file()})
 }
 #[tauri::command]
 async fn check_update() -> Result<Value, String> {
@@ -489,7 +495,7 @@ fn main() {
             std::fs::write(device_file, &device)?;
             let local = option_env!("QIYIN_LOCAL_PREVIEW") == Some("1");
             let origin =
-                trusted_origin(option_env!("QIYIN_TAURI_LICENSE_URL").unwrap_or(""), local)?;
+                if free_experience() { String::new() } else { trusted_origin(option_env!("QIYIN_TAURI_LICENSE_URL").unwrap_or(""), local)? };
             let runtime = if cfg!(debug_assertions) {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("runtime")
             } else {
@@ -580,6 +586,21 @@ mod tests {
             &json!({"type":"result","loginOk":true,"token":"secret","tokenCheck":{"token":"secret"}}),
         );
         assert!(!v.to_string().contains("secret"));
+    }
+    #[test]
+    fn account_free_build_authorizes_without_a_server_or_token() {
+        let service = Service {
+            core: AsyncMutex::new(Core { token: String::new(), sources: vec![], output: None, job: None }),
+            http: reqwest::Client::new(), origin: String::new(), device: String::new(),
+            data: PathBuf::new(), runtime: PathBuf::new(),
+        };
+        tauri::async_runtime::block_on(async {
+            let core = service.core.lock().await;
+            for feature in ["suno_upload", "suno_download", "lyrics_process"] {
+                let result = service.authorize(&core, feature).await;
+                assert_eq!(result.is_ok(), free_experience());
+            }
+        });
     }
     #[test]
     fn upload_queue_uses_only_selected_file_indices() {
