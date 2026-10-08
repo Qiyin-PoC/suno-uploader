@@ -82,26 +82,29 @@ THAI_COMMON: Dict[str, str] = {
 
 
 def process_cantonese(text: str) -> str:
-    """粤语 → 粤拼。"""
-    result: List[str] = []
+    """粤语 → 粤拼。未收录内容整块保留，不逐字拆开。"""
+    units: List[str] = []
+    buffer = ""
     i = 0
     while i < len(text):
         matched = False
         for length in (4, 3, 2, 1):
             key = text[i:i + length]
             if key in CANTONESE_MAP:
-                result.append(CANTONESE_MAP[key])
+                if buffer:
+                    units.append(buffer)
+                    buffer = ""
+                units.append(CANTONESE_MAP[key])
                 i += length
                 matched = True
                 break
         if not matched:
-            ch = text[i]
-            if re.match(r"[\u4e00-\u9fff]", ch):
-                result.append(ch)
-            else:
-                result.append(ch)
+            # 未收录字符先累积成一段；逐字 append 会被 " ".join 拆成一个个单字。
+            buffer += text[i]
             i += 1
-    return " ".join(result)
+    if buffer:
+        units.append(buffer)
+    return " ".join(u for u in units if u)
 
 
 def process_english_pronunciation(text: str) -> str:
@@ -179,26 +182,29 @@ def process_korean_romanization(text: str) -> str:
 
 
 def process_thai_romanization(text: str) -> str:
-    """泰语 → 罗马音。"""
-    result: List[str] = []
+    """泰语 → 罗马音。未收录内容整块保留，不逐字拆开。"""
+    units: List[str] = []
+    buffer = ""
     i = 0
     while i < len(text):
         matched = False
         for length in (5, 4, 3, 2, 1):
             key = text[i:i + length]
             if key in THAI_COMMON:
-                result.append(THAI_COMMON[key])
+                if buffer:
+                    units.append(buffer)
+                    buffer = ""
+                units.append(THAI_COMMON[key])
                 i += length
                 matched = True
                 break
         if not matched:
-            ch = text[i]
-            if "\u0E00" <= ch <= "\u0E7F":
-                result.append(ch)
-            else:
-                result.append(ch)
+            # 泰语没有词间空格，未收录字符若逐个入列会被 " ".join 拆成不可读单字。
+            buffer += text[i]
             i += 1
-    return " ".join(result)
+    if buffer:
+        units.append(buffer)
+    return " ".join(u for u in units if u)
 
 
 def process_multilang(text: str, mode: str) -> str:
