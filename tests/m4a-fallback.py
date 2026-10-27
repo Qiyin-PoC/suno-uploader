@@ -1,6 +1,9 @@
+import math
+import struct
 import subprocess
 import sys
 import tempfile
+import wave
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
@@ -19,14 +22,22 @@ def run(command):
 
 with tempfile.TemporaryDirectory(prefix="suno-m4a-fallback-") as temporary:
     temporary = Path(temporary)
+    tone = temporary / "tone.wav"
+    sample_rate = 8000
+    with wave.open(str(tone), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(sample_rate)
+        frames = (struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * index / sample_rate)))
+                  for index in range(sample_rate // 4))
+        output.writeframes(b"".join(frames))
     fixtures = {
         "mp3": ["-c:a", "libmp3lame", "-f", "mp3"],
         "aac": ["-c:a", "aac", "-f", "adts"],
     }
     for container, encoding in fixtures.items():
         source = temporary / f"source.{container}"
-        run([str(ffmpeg), "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.25",
-             *encoding, "-y", str(source)])
+        run([str(ffmpeg), "-v", "error", "-i", str(tone), *encoding, "-y", str(source)])
         output = temporary / f"output-{container}"
         work = temporary / f"work-{container}"
 
