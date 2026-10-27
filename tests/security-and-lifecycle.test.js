@@ -56,8 +56,13 @@ test("ExecutionGrant 拒绝非法 token 并可安全清理", () => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
-test("worker 完整性接受原版并拒绝篡改文件", () => {
-  const original = path.resolve("backend/backend.exe");
+const windowsWorker = path.resolve("backend/backend.exe");
+test("worker 完整性接受原版并拒绝篡改文件", {
+  skip: fs.existsSync(windowsWorker)
+    ? false
+    : "需要 Windows 构建产物 backend/backend.exe（macOS 构建不产生该文件）",
+}, () => {
+  const original = windowsWorker;
   assert.equal(verifyWorker(original), original);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "worker-integrity-"));
   const altered = path.join(directory, "backend.exe");

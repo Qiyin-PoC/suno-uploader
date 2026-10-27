@@ -1,0 +1,13 @@
+# backend worker（上传/下载/歌词/历史）运行与冻结打包所需依赖。
+# 用法（见 tauri-preview/README.md）：
+#   .venv/bin/python -m pip install -r backend/requirements.txt -r tauri-preview/requirements-build.txt
+
+numpy==2.5.3
+requests[socks]==2.34.2
+pypinyin==0.55.0
+websocket-client==1.9.0
+# 供 suno_download.decrypt_audio 解密下载音轨；缺失时会报 CRYPTO_UNAVAILABLE。
+cryptography==50.0.2
+
+# 说明：librosa 未列入。仅 audio_splitter.estimate_bpm_from_wav 可选使用，
+# 缺失时该函数回退 (120.0, 0.0)，冻结包按此设计不包含 librosa（体积达数百 MB）。

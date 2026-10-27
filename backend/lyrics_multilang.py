@@ -82,26 +82,29 @@ THAI_COMMON: Dict[str, str] = {
 
 
 def process_cantonese(text: str) -> str:
-    """粤语 → 粤拼。"""
-    result: List[str] = []
+    """粤语 → 粤拼。未收录内容整块保留，不逐字拆开。"""
+    units: List[str] = []
+    buffer = ""
     i = 0
     while i < len(text):
         matched = False
         for length in (4, 3, 2, 1):
             key = text[i:i + length]
             if key in CANTONESE_MAP:
-                result.append(CANTONESE_MAP[key])
+                if buffer:
+                    units.append(buffer)
+                    buffer = ""
+                units.append(CANTONESE_MAP[key])
                 i += length
                 matched = True
                 break
         if not matched:
-            ch = text[i]
-            if re.match(r"[\u4e00-\u9fff]", ch):
-                result.append(ch)
-            else:
-                result.append(ch)
+            # 未收录字符先累积成一段；逐字 append 会被 " ".join 拆成一个个单字。
+            buffer += text[i]
             i += 1
-    return " ".join(result)
+    if buffer:
+        units.append(buffer)
+    return " ".join(u for u in units if u)
 
 
 def process_english_pronunciation(text: str) -> str:
@@ -115,55 +118,93 @@ def process_english_pronunciation(text: str) -> str:
     return result
 
 
+# Hangul 音节分解所需的兼容 Jamo 表。
+# 必须与 KOREAN_JAMO 的键同属 U+3131 兼容 Jamo 区；若改用 U+1100 区 Jamo，
+# KOREAN_JAMO.get() 会全部 miss，罗马音会原样吐出 Jamo 字符。
+_KR_CHOSEONG = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+_KR_JUNGSEONG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+_KR_JONGSEONG = (
+    "", "ㄱ", "ㄲ", "ㄳ", "ㄴ", "ㄵ", "ㄶ", "ㄷ", "ㄹ", "ㄺ", "ㄻ", "ㄼ", "ㄽ",
+    "ㄾ", "ㄿ", "ㅀ", "ㅁ", "ㅂ", "ㅄ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅊ", "ㅋ",
+    "ㅌ", "ㅍ", "ㅎ",
+)
+
+
 def _kr_decompose(ch: str) -> List[str]:
-    """拆解 Hangul 到 Jamo。"""
+    """拆解 Hangul 到兼容 Jamo（与 KOREAN_JAMO 表键同一码区）。"""
     code = ord(ch)
     if 0xAC00 <= code <= 0xD7A3:
         offset = code - 0xAC00
         cho = offset // (21 * 28)
         jung = (offset % (21 * 28)) // 28
         jong = offset % 28
-        parts = [chr(0x1100 + cho), chr(0x1161 + jung)]
+        parts = [_KR_CHOSEONG[cho], _KR_JUNGSEONG[jung]]
         if jong:
-            parts.append(chr(0x11A7 + jong))
+            parts.append(_KR_JONGSEONG[jong])
         return parts
     return [ch]
 
 
+# 终声（받침）的罗马音表：与初声规则不同。
+# ㅇ 作终声是 ng（作初声才是静音），ㄱ/ㄷ/ㅂ 作终声按不送气音写成 k/t/p。
+_KR_JONGSEONG_ROMAN = {
+    "": "", "ㄱ": "k", "ㄲ": "k", "ㄳ": "ks", "ㄴ": "n", "ㄵ": "nj", "ㄶ": "n",
+    "ㄷ": "t", "ㄹ": "l", "ㄺ": "k", "ㄻ": "m", "ㄼ": "l", "ㄽ": "l", "ㄾ": "l",
+    "ㄿ": "p", "ㅀ": "l", "ㅁ": "m", "ㅂ": "p", "ㅄ": "p", "ㅅ": "t", "ㅆ": "t",
+    "ㅇ": "ng", "ㅈ": "t", "ㅊ": "t", "ㅋ": "k", "ㅌ": "t", "ㅍ": "p", "ㅎ": "t",
+}
+
+
+def _kr_romanize_syllable(ch: str) -> str:
+    """单个 Hangul 音节 → 罗马音；初声/中声/终声分别取各自位置对应的表。"""
+    code = ord(ch)
+    if not 0xAC00 <= code <= 0xD7A3:
+        return ch
+    offset = code - 0xAC00
+    cho = offset // (21 * 28)
+    jung = (offset % (21 * 28)) // 28
+    jong = offset % 28
+    roman = KOREAN_JAMO.get(_KR_CHOSEONG[cho], "") + KOREAN_JAMO.get(_KR_JUNGSEONG[jung], "")
+    if jong:
+        roman += _KR_JONGSEONG_ROMAN.get(_KR_JONGSEONG[jong], "")
+    return roman
+
+
 def process_korean_romanization(text: str) -> str:
-    """韩语 → 罗马音。"""
+    """韩语 → 罗马音（音节连续拼写，保留原文空格与标点）。"""
     result: List[str] = []
     for ch in text:
         if "가" <= ch <= "힣":
-            parts = _kr_decompose(ch)
-            roman = "".join(KOREAN_JAMO.get(p, p) for p in parts)
-            result.append(roman)
+            result.append(_kr_romanize_syllable(ch))
         else:
             result.append(ch)
-    return " ".join(result)
+    return "".join(result)
 
 
 def process_thai_romanization(text: str) -> str:
-    """泰语 → 罗马音。"""
-    result: List[str] = []
+    """泰语 → 罗马音。未收录内容整块保留，不逐字拆开。"""
+    units: List[str] = []
+    buffer = ""
     i = 0
     while i < len(text):
         matched = False
         for length in (5, 4, 3, 2, 1):
             key = text[i:i + length]
             if key in THAI_COMMON:
-                result.append(THAI_COMMON[key])
+                if buffer:
+                    units.append(buffer)
+                    buffer = ""
+                units.append(THAI_COMMON[key])
                 i += length
                 matched = True
                 break
         if not matched:
-            ch = text[i]
-            if "\u0E00" <= ch <= "\u0E7F":
-                result.append(ch)
-            else:
-                result.append(ch)
+            # 泰语没有词间空格，未收录字符若逐个入列会被 " ".join 拆成不可读单字。
+            buffer += text[i]
             i += 1
-    return " ".join(result)
+    if buffer:
+        units.append(buffer)
+    return " ".join(u for u in units if u)
 
 
 def process_multilang(text: str, mode: str) -> str:

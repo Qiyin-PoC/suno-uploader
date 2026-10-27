@@ -33,7 +33,7 @@ class SunoDownloadBatch {
     const urls = raw.map(this.normalizeUrl);
     const invalid = urls.findIndex(url=>!url);
     if (invalid>=0) return this.reject(`第 ${invalid+1} 行不是有效的 Suno 歌曲链接，请修改后重试。`,'INVALID_URL');
-    if (!['mp3','wav'].includes(payload.format)) return this.reject('请选择 MP3 或 WAV。','INVALID_FORMAT');
+    if (!['mp3','wav','m4a'].includes(payload.format)) return this.reject('请选择 MP3、WAV 或 m4a。','INVALID_FORMAT');
     const unique = [...new Map(urls.map(url=>[new URL(url).pathname.replace(/\/$/,''),url])).values()];
     const batch = {id:crypto.randomUUID(), index:0, cancelled:false};
     this.active = batch;
@@ -57,7 +57,7 @@ class SunoDownloadBatch {
       Object.assign(this.state.items[batch.index], {status:'failed',message:'下载组件发生异常，请重试。'});
     } finally {
       for (const item of this.state.items) if (item.status==='pending') {
-        item.status='cancelled'; item.message=batch.cancelled?'已取消':'未开始，请检查软件权益后重试';
+        item.status='cancelled'; item.message=batch.cancelled?'已取消':'未开始，请检查下载组件后重试';
       }
       const saved=this.state.items.filter(item=>item.status==='succeeded');
       const failed=this.state.items.filter(item=>item.status==='failed').length;

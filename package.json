@@ -10,8 +10,10 @@
     "start": "electron .",
     "check": "node scripts/check-release.js",
     "test": "node --test tests/*.test.js",
-    "pack": "npm run check && electron-builder --dir",
-    "dist": "npm run check && electron-builder --win zip --x64"
+    "test:e2e": "node scripts/run-packaged-e2e.js",
+    "pack": "npm test && npm run check && electron-builder --dir && npm run test:e2e",
+    "dist": "npm test && npm run check && electron-builder --win zip --x64 && npm run test:e2e",
+    "dist:mac": "npm test && npm run check && node scripts/package-macos.js"
   },
   "devDependencies": {
     "electron": "31.7.7",
@@ -24,6 +26,7 @@
     "asar": true,
     "files": [
       "electron/**/*",
+      "!electron/engine/**",
       "assets/**/*",
       "package.json"
     ],
@@ -33,12 +36,13 @@
         "to": "assets"
       },
       {
-        "from": "backend/backend.exe",
-        "to": "backend/backend.exe"
+        "from": "backend",
+        "to": "backend",
+        "filter": ["**/*.py"]
       },
       {
-        "from": "backend/suno_download_cli.exe",
-        "to": "backend/suno_download_cli.exe"
+        "from": "python-embed",
+        "to": "python-embed"
       },
       {
         "from": "vendor/ffmpeg/win32-x64/ffmpeg.exe",

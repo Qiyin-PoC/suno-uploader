@@ -36,3 +36,18 @@ tests/artifacts/
 # 系统
 .DS_Store
 Thumbs.db
+
+# Tauri / Mac 构建产物（体积大，不入库）
+tauri-preview/src-tauri/target/
+tauri-preview/src-tauri/runtime/
+tauri-preview/src-tauri/gen/
+tauri-preview/.build/
+.venv/
+
+# Electron macOS 打包产物与中间文件（约 500MB，全部可重新生成）
+#   build/macos/engine/    PyInstaller 冻结引擎      → scripts/package-macos.js
+#   build/macos/icon.icns  由 assets/logo.png 生成    → scripts/package-macos.js
+#   build/macos/vendor/    自包含 ffmpeg              → scripts/build-ffmpeg-macos.sh
+#   build/macos/*.dmg      安装包
+dist-mac/
+build/

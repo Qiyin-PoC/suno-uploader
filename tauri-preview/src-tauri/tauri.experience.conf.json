@@ -1,0 +1,16 @@
+{
+  "productName": "Qiyin Experience",
+  "identifier": "com.qiyin.suno.experience",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "期音 · 免账号体验版",
+        "width": 1120,
+        "height": 780,
+        "minWidth": 760,
+        "minHeight": 650
+      }
+    ]
+  }
+}

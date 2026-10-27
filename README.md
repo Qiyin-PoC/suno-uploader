@@ -1,45 +1,32 @@
-# Suno 歌曲上传器 V5.0.4
+# 期音科技 · Suno 歌曲上传器
 
-本项目仅保留三个业务板块，
+本项目仅保留三个业务板块：
 
-1. **Suno 歌曲上传**：切片拼接、单曲/批量上传、稳定/快速模式、歌词处理、多账号。
-2. **上传历史**：记录、搜索、过滤、统计与清理。
-3. **Suno 歌曲下载**：MP3 / WAV，支持每批最多 100 条链接。
+1. **Suno 歌曲上传**：支持单曲/批量上传、断点续传、速度模式、歌词处理和多账号。
+2. **上传历史**：查看、搜索、筛选和清理上传记录。
+3. **Suno 歌曲下载**：支持 MP3、WAV、m4a，每批最多 100 条链接。
 
-## 5.0.4 更新
-
-- 官网账号与软件权益重新闭环。
-- Ed25519 短时 `ExecutionGrant`。
-- 上传/下载独立任务授权与 loopback capability broker。
-- Suno 浏览器扩展协议 2：约 30 秒刷新、浏览器/软件重启恢复、休眠恢复、账号绑定、防旧 token 覆盖。
-- 45 秒上传准备 deadline、`AbortSignal`、准备阶段取消、后端慢启动提示和超时终止。
-- IPC sender/main frame 校验、导航/webview/window.open 防护、HTTP(S) 外链过滤、CSP。
-- Worker SHA-256 完整性校验与 JWT 日志脱敏。
+Windows 内部版不要求额外的网站账号或软件权益。上传仍需连接使用者自己的 Suno 账号；公开歌曲链接下载不要求登录 Suno。
 
 ## 运行要求
 
 - Windows 10/11 x64。
-- 正常联网。
-- 有效的官网账号及对应软件权益。
-- Chrome 或 Edge 120+（使用扩展协议 2 时）。
-- 最终免安装包不需要安装 Node.js、Python 或 ffmpeg。
+- 上传功能需要 Chrome 或 Edge 120+ 及仓库内的 Suno 登录助手。
+- 下载功能需要正常联网。
+- 免安装包已经包含 Electron、Python 运行时和 FFmpeg。
 
-## 源码与运行组件
+## 项目结构
 
 ```text
-electron/              Electron 31.7.7 主进程、preload 和 renderer
-backend/               5.0.4 上传与下载 worker EXE
-vendor/ffmpeg/         内置 ffmpeg
-suno-login-extension/  5.0.4 / protocol 2 浏览器扩展
-assets/                运行图标与界面资源
-scripts/               发布一致性检查
-tests/                 安全、任务授权、队列和打包界面测试
+electron/              Electron 主进程、preload 和原期音界面
+backend/               上传、历史、歌词及下载 Python 后端
+python-embed/          Windows 嵌入式 Python 运行时
+vendor/ffmpeg/         内置 FFmpeg
+suno-login-extension/  Suno 登录助手（协议 2）
+tauri-preview/         Mac 体验版与跨平台预览实现
+scripts/               发布检查和打包版 E2E
+tests/                 单元、集成、FFmpeg 与打包版测试
 ```
-
-正式包使用与 5.0.4 manifest 匹配的：
-
-- `backend/backend.exe`
-- `backend/suno_download_cli.exe`
 
 ## 安装依赖
 
@@ -47,67 +34,55 @@ tests/                 安全、任务授权、队列和打包界面测试
 npm install
 ```
 
-项目锁定 Electron `31.7.7`，与对标程序实际运行时一致。
-
 ## 检查和测试
 
 ```powershell
-npm run check
 npm test
+npm run check
 ```
 
-`npm run check` 会验证：
+测试覆盖：
 
-- 版本与 Electron 运行时；
-- 17 个直接复用的 5.0.4 源文件 SHA-256；
-- 协议 2 扩展文件 SHA-256；
-- 上传/下载 worker 与 manifest；
-- 侧栏严格只有上传、下载、历史；
-- CSP、MP3/WAV 选项和 JavaScript 语法。
+- 内部 Python Token 预检与扩展刷新竞态；
+- 无网站任务租约的上传 worker 启动；
+- 上传准备取消和 deadline；
+- 有效 Suno URL 与 m4a 批量下载；
+- MP3/AAC 回退生成真实、可解码的 M4A 容器；
+- 原期音三个界面板块、CSP 和 IPC 安全边界；
+- 打包程序中的真实 Python 进程启动路径。
 
-## 构建免安装版
+## 构建 Windows 免安装版
 
 ```powershell
 npm run pack   # dist/win-unpacked
-npm run dist   # dist/Suno歌曲上传器-V5.0.4-免安装版.zip
+npm run dist   # dist/ 下生成免安装 ZIP
 ```
 
-ZIP 是正式免安装交付：完整解压后运行 `Suno歌曲上传器.exe`，不要只复制主 EXE。浏览器扩展位于解压目录的 `resources/suno-login-extension`。
+`pack` 和 `dist` 会依次运行自动测试、发布一致性检查、Electron 打包以及打包版 E2E。完整解压后运行 `Suno歌曲上传器.exe`，不要只复制主程序。
 
 ## 使用步骤
 
-### 1. 登录官网账号
+### 连接 Suno 并上传
 
-打开左下角账号菜单，登录官网账号并完成软件权益验证。上传、下载任务会获取短时 ExecutionGrant 和独立任务租约。
+1. 在软件中选择账号 1/2/3 并启动扩展登录。
+2. 在 Chrome 或 Edge 中加载 `resources/suno-login-extension`。
+3. 完成配对并保持对应 Suno 账号可用。
+4. 选择单曲或批量音频，设置速度、歌词和续传策略后开始上传。
 
-### 2. 连接 Suno
+### 下载歌曲
 
-- 选择账号 1/2/3。
-- 点击扩展登录。
-- 在 Chrome/Edge 中加载 `resources/suno-login-extension`。
-- 输入配对码并保持原 Suno 账号页面可访问。
+进入“Suno 歌曲下载”，每行粘贴一个有效的 Suno 歌曲链接，选择 MP3、WAV 或 m4a 后开始下载。
 
-扩展协议 2 会自动刷新连接，并在浏览器、软件重启或系统休眠后尝试恢复。
+## Mac 免账号体验版
 
-### 3. 上传
+`codex/mac-account-free-master` 分支包含 Mac 体验版。进入源码根目录执行：
 
-选择单曲或批量音频，设置速度与歌词后开始上传。暂停或取消可终止尚未完成的准备阶段和上传 worker。
-
-### 4. 下载
-
-进入“Suno歌曲下载”，每行粘贴一个链接，选择 MP3 或 WAV，然后开始下载。
-
-## 数据位置
-
-应用名称和数据协议与 5.0.4 对齐，默认数据目录：
-
-```text
-%APPDATA%\悸风喵核 Studio
+```bash
+python3 tauri-preview/package_experience_macos.py
 ```
+
+体验版不连接额外的网站账号授权服务，上传仍需要使用者自己的 Suno 登录。构建要求 macOS 26+；完整限制与验收记录见 [docs/ACCOUNT-FREE-EXPERIENCE.md](docs/ACCOUNT-FREE-EXPERIENCE.md)。
 
 ## 合规说明
 
-- 上传、下载均使用登录账号对应的服务权限。
-- 请遵守 Suno 服务条款和相关版权规定。
-- 只处理本人拥有权利或已经获得授权的音频。
-- 商业授权声明以应用内及 5.0.4 随附说明为准。
+请遵守 Suno 服务条款和相关版权规定，只处理本人拥有权利或已经获得授权的音频。

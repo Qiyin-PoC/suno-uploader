@@ -27,7 +27,10 @@ const VALID_SPEEDS = new Set(["stable", "onbeat2x"]);
 function cleanTitle(value, audioPath) {
   const title = String(value || "").trim();
   if (title) return title.slice(0, 180);
-  return path.basename(String(audioPath || "")).replace(/\.[^.]+$/, "").slice(0, 180);
+  // 队列里的路径可能来自 Windows（反斜杠分隔）。先归一为 / 再取文件名，
+  // 避免在非 Windows 平台上把整条路径当成文件名（"C:\music\A" 而非 "A"）。
+  const normalized = String(audioPath || "").replace(/\\/g, "/");
+  return path.basename(normalized).replace(/\.[^.]+$/, "").slice(0, 180);
 }
 
 function normalizeItem(item = {}, index = 0, idFactory = () => crypto.randomUUID()) {
