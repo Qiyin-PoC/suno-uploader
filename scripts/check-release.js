@@ -42,7 +42,7 @@ const internalRuntimeBaseline = {
   "backend/suno_download_jobs.py": "a3118a24a584ee401730f70e72eff4cf0b91fdb3258c77adb7392d3fbb501b9a",
   "python-embed/python.exe": "4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a"
 };
-const newlinePortableFiles = new Set(["backend/backend.py", "backend/suno_download.py", "backend/suno_download_jobs.py"]);
+const newlinePortableFiles = new Set(["backend/backend.py", "backend/suno_download_cli.py", "backend/suno_download.py", "backend/suno_download_jobs.py"]);
 // python-embed/python.exe 是 Windows 专用运行时；macOS 上同一路径是本机转发脚本，
 // 哈希必然与基线不同。该条目只在 Windows 校验哈希；存在性仍需满足，因为下面的
 // CLI 完整性检查会通过它执行 backend。
@@ -70,9 +70,13 @@ const qiyinUiBaseline = {
   "electron/renderer/suno-download.css": "cfc91b35901f286c2db8c21e3b9e6514efc135b7d0eaa93e73bfab102c245a3c",
   "electron/renderer/suno-download.js": "6caa0d9ef143e3591327e2cb5c463c5a0ad21d0508469a10f7262997fd6d65a5"
 };
+const qiyinNewlinePortableFiles = new Set(["electron/renderer/suno-download.js"]);
 for (const [relative, expected] of Object.entries(qiyinUiBaseline)) {
   if (!fs.existsSync(path.join(root, relative))) fail(`缺少期音 UI 文件 ${relative}`);
-  else if (sha256(relative) !== expected) fail(`${relative} 不再是迁移前期音 UI 原文件`);
+  else {
+    const actual = qiyinNewlinePortableFiles.has(relative) ? sha256NormalizedText(relative) : sha256(relative);
+    if (actual !== expected) fail(`${relative} 不再是迁移前期音 UI 原文件`);
+  }
 }
 
 const extensionBaseline = {
