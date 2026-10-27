@@ -4,7 +4,9 @@ import tempfile
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
-ffmpeg = root / "vendor" / "ffmpeg" / "win32-x64" / "ffmpeg.exe"
+ffmpeg = (root / "build" / "macos" / "vendor" / "ffmpeg" / "darwin-arm64" / "ffmpeg"
+          if sys.platform == "darwin"
+          else root / "vendor" / "ffmpeg" / "win32-x64" / "ffmpeg.exe")
 sys.path.insert(0, str(root / "backend"))
 from suno_download_jobs import DownloadManager  # noqa: E402
 
