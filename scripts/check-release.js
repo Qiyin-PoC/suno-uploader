@@ -38,10 +38,11 @@ const internalRuntimeBaseline = {
   "electron/main/backend-process.js": "b611deb0265ab1c8ec51c9d73c691926a4bcdab841024048d62b9acc2a8b2e18",
   "backend/backend.py": "0837b5d0ecaba0d2a21f651bd33445650e73bd0057c6b4bfa85381e94fdc45e7",
   "backend/suno_download_cli.py": "e0a5a2b1eb53a29bcfbce521dd308eac8493da5d316fb29868bc73beba05e93f",
+  "backend/suno_download.py": "f7ef8a27f03657160313ff554d18603ca382b8b8bd3aff0cb6e2459af41408f7",
   "backend/suno_download_jobs.py": "a3118a24a584ee401730f70e72eff4cf0b91fdb3258c77adb7392d3fbb501b9a",
   "python-embed/python.exe": "4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a"
 };
-const newlinePortableFiles = new Set(["backend/backend.py", "backend/suno_download_jobs.py"]);
+const newlinePortableFiles = new Set(["backend/backend.py", "backend/suno_download.py", "backend/suno_download_jobs.py"]);
 // python-embed/python.exe 是 Windows 专用运行时；macOS 上同一路径是本机转发脚本，
 // 哈希必然与基线不同。该条目只在 Windows 校验哈希；存在性仍需满足，因为下面的
 // CLI 完整性检查会通过它执行 backend。

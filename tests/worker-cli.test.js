@@ -65,6 +65,12 @@ test("内部下载后端提供 MP3、WAV 和 m4a 且不要求官网任务租约"
   assert.doesNotMatch(source, /ExecutionGrant/);
 });
 
+test("主音频线路网络失败时会切换备用 CDN", () => {
+  const result = run(path.join(root, "tests", "download-network-fallback.py"), [root]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /切换备用 CDN/);
+});
+
 test("MP3 和 ADTS AAC 回退会生成可解码的真实 m4a 容器", () => {
   const result = run(path.join(root, "tests", "m4a-fallback.py"), [root]);
   assert.equal(result.status, 0, result.stderr || result.stdout);

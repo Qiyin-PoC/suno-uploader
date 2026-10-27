@@ -58,6 +58,8 @@ const e2eEnv = {
   GAOBAI_E2E_DOWNLOAD_SCRIPT: downloadStub,
   GAOBAI_E2E_MARKER_DIR: markerDir,
 };
+// DSH/Electron 开发宿主可能设置该变量；打包程序必须按 GUI 应用启动，而不是 Node 模式。
+delete e2eEnv.ELECTRON_RUN_AS_NODE;
 const app = spawn(executable, [
   `--user-data-dir=${userData}`,
   `--remote-debugging-port=${port}`,
@@ -96,6 +98,22 @@ function runPython(script) {
   if (result.status !== 0) throw new Error(`${script} 失败，退出码 ${result.status}`);
 }
 
+function removeTemporaryDirectory(directory) {
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  let lastError;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!["EPERM", "EBUSY", "ENOTEMPTY"].includes(error?.code)) throw error;
+      Atomics.wait(sleeper, 0, 0, 250);
+    }
+  }
+  throw lastError;
+}
+
 (async () => {
   try {
     await waitUntilReady();
@@ -108,8 +126,8 @@ function runPython(script) {
     } else if (!app.killed) {
       app.kill("SIGTERM");
     }
-    fs.rmSync(userData, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
-    fs.rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+    removeTemporaryDirectory(userData);
+    removeTemporaryDirectory(fixtureRoot);
   }
 })().catch(error => {
   console.error(error.stack || error.message || error);

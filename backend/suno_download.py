@@ -41,8 +41,9 @@ PAGE_TIMEOUT = 15.0
 RIGHTS_TIMEOUT = 15.0
 AUDIO_TIMEOUT = 300.0
 MAX_REDIRECTS = 4
-MAX_RETRIES = 2
-RETRY_DELAY = 0.45
+MAX_RETRIES = 4
+RETRY_DELAY = 0.75
+MAX_RETRY_DELAY = 4.0
 MAX_AUDIO_CANDIDATES = 12
 MAX_TASK_REQUESTS = 32
 TASK_TIMEOUT = 360.0
@@ -671,7 +672,8 @@ class _Downloader:
                     raise
                 on_status({"PAGE": "页面读取失败，正在重试…", "AUDIO": "音频连接中断，正在重试…",
                            "RIGHTS": "播放授权请求失败，正在重试…"}[kind])
-                if cancel_event.wait(min(RETRY_DELAY * (attempt + 1), budget.remaining())):
+                retry_delay = min(RETRY_DELAY * (2 ** attempt), MAX_RETRY_DELAY, budget.remaining())
+                if cancel_event.wait(retry_delay):
                     raise DownloadError("CANCELLED") from None
                 budget.check()
 
@@ -697,6 +699,7 @@ class _Downloader:
             if not song_id or not fallback:
                 raise
             title, candidates = "SUNO-" + song_id, _audio_candidates("", song_id)
+        last_candidate_error = None
         for candidate in candidates:
             budget.check()
             on_status("正在下载音频…")
@@ -705,9 +708,17 @@ class _Downloader:
                                        on_status=on_status, on_progress=on_progress, budget=budget)
                 break
             except DownloadError as exc:
-                if exc.code not in ("AUDIO_HTTP_404", "AUDIO_HTTP_410"):
+                unavailable = exc.code in ("AUDIO_HTTP_404", "AUDIO_HTTP_410")
+                transient = (exc.code in ("NETWORK_ERROR", "REQUEST_TIMEOUT", "AUDIO_IDLE_TIMEOUT")
+                             or bool(re.fullmatch(r"AUDIO_HTTP_(?:408|425|429|5\d\d)", exc.code)))
+                if not unavailable and not transient:
                     raise
+                if transient:
+                    last_candidate_error = exc
+                on_status("当前音频线路不可用，正在切换备用线路…")
         else:
+            if last_candidate_error is not None:
+                raise last_candidate_error
             if len(candidates) >= MAX_AUDIO_CANDIDATES:
                 raise DownloadError("AUDIO_CANDIDATE_LIMIT", no_retry=True)
             raise DownloadError("AUDIO_NOT_FOUND")
